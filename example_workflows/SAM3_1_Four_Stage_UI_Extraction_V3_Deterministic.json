@@ -1,0 +1,2407 @@
+{
+  "id": "8c4a0c83-bea4-5f36-98b3-94dd03d2124f",
+  "revision": 0,
+  "last_node_id": 53,
+  "last_link_id": 62,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "LoadImage",
+      "pos": [
+        20,
+        230
+      ],
+      "size": [
+        320,
+        320
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            3,
+            5,
+            9
+          ]
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": []
+        }
+      ],
+      "title": "00 載入原始 UI 圖",
+      "properties": {
+        "Node name for S&R": "LoadImage",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": [
+        "sam3_ui_source.png",
+        "image"
+      ]
+    },
+    {
+      "id": 2,
+      "type": "CheckpointLoaderSimple",
+      "pos": [
+        20,
+        600
+      ],
+      "size": [
+        350,
+        110
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            2,
+            22,
+            42
+          ]
+        },
+        {
+          "name": "CLIP",
+          "type": "CLIP",
+          "links": [
+            1,
+            21,
+            41
+          ]
+        },
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": []
+        }
+      ],
+      "title": "原生 SAM3.1",
+      "properties": {
+        "Node name for S&R": "CheckpointLoaderSimple",
+        "cnr_id": "comfy-core",
+        "models": [
+          {
+            "name": "sam3.1_multiplex_fp16.safetensors",
+            "url": "https://huggingface.co/Comfy-Org/sam3.1/resolve/main/checkpoints/sam3.1_multiplex_fp16.safetensors",
+            "directory": "checkpoints"
+          }
+        ]
+      },
+      "widgets_values": [
+        "sam3.1_multiplex_fp16.safetensors"
+      ]
+    },
+    {
+      "id": 3,
+      "type": "MarkdownNote",
+      "pos": [
+        20,
+        20
+      ],
+      "size": [
+        700,
+        500
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {},
+      "widgets_values": [
+        "# V3：遮罩編號＋人工核准＋確定性補洞\n\n1. 每階段先部分執行紅色 Preview。黃色是外擴後真正會被修改的範圍。\n2. 綠框 #N 會保留；不想處理的框，把編號填入 exclude_indices，例如 `2,5,8-10`。\n3. 確認後把該階段紅色 Gate 的 approved 打開，再執行。\n4. 下一階段 Gate 預設關閉，因此按全域執行也會在下一個 Preview 自動停止。\n\n補圖不使用 FLUX/MAT：文字與 icon 使用 Telea；按鈕使用漸層平面重建。\n紅色 XN＝已排除，綠色 #N＝將裁切／補洞。"
+      ],
+      "title": "V3 操作說明（先看）"
+    },
+    {
+      "id": 10,
+      "type": "CLIPTextEncode",
+      "pos": [
+        780,
+        60
+      ],
+      "size": [
+        390,
+        180
+      ],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 1
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "links": [
+            4
+          ]
+        }
+      ],
+      "title": "01 文字 SAM3 提示詞",
+      "properties": {
+        "Node name for S&R": "CLIPTextEncode",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": [
+        "letters:10, numbers:15, Chinese characters:20"
+      ]
+    },
+    {
+      "id": 11,
+      "type": "SAM3_Detect",
+      "pos": [
+        1210,
+        40
+      ],
+      "size": [
+        300,
+        300
+      ],
+      "flags": {},
+      "order": 11,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 2
+        },
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 3
+        },
+        {
+          "name": "conditioning",
+          "type": "CONDITIONING",
+          "shape": 7,
+          "link": 4
+        },
+        {
+          "name": "bboxes",
+          "type": "BOUNDING_BOX",
+          "shape": 7,
+          "link": null
+        },
+        {
+          "name": "positive_coords",
+          "type": "STRING",
+          "shape": 7,
+          "link": null
+        },
+        {
+          "name": "negative_coords",
+          "type": "STRING",
+          "shape": 7,
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "masks",
+          "type": "MASK",
+          "links": [
+            6
+          ]
+        },
+        {
+          "name": "bboxes",
+          "type": "BOUNDING_BOX",
+          "links": []
+        }
+      ],
+      "title": "01 文字 分割（individual masks）",
+      "properties": {
+        "Node name for S&R": "SAM3_Detect",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": [
+        0.22,
+        0,
+        true
+      ]
+    },
+    {
+      "id": 13,
+      "type": "SaveImage",
+      "pos": [
+        2000,
+        20
+      ],
+      "size": [
+        360,
+        300
+      ],
+      "flags": {},
+      "order": 13,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": [
+            8
+          ]
+        }
+      ],
+      "title": "▶ 01 文字 編號 Preview（必須先跑）",
+      "properties": {
+        "Node name for S&R": "SaveImage",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": [
+        "sam3_four_stage/text/preview"
+      ],
+      "color": "#8b2f2f",
+      "bgcolor": "#4b1f1f"
+    },
+    {
+      "id": 14,
+      "type": "InvertMask",
+      "pos": [
+        1550,
+        370
+      ],
+      "size": [
+        260,
+        80
+      ],
+      "flags": {},
+      "order": 14,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "mask",
+          "type": "MASK",
+          "link": 12
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": [
+            14
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "InvertMask",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 15,
+      "type": "JoinImageWithAlpha",
+      "pos": [
+        1840,
+        370
+      ],
+      "size": [
+        290,
+        100
+      ],
+      "flags": {},
+      "order": 15,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 13
+        },
+        {
+          "name": "alpha",
+          "type": "MASK",
+          "link": 14
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            15
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "JoinImageWithAlpha",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 16,
+      "type": "SAM3BatchCropToObjects",
+      "pos": [
+        2440,
+        310
+      ],
+      "size": [
+        340,
+        240
+      ],
+      "flags": {},
+      "order": 16,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 15
+        },
+        {
+          "name": "masks",
+          "type": "MASK",
+          "link": 16
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGES",
+          "type": "IMAGE",
+          "links": [
+            17
+          ]
+        },
+        {
+          "name": "MASKS",
+          "type": "MASK",
+          "links": []
+        },
+        {
+          "name": "X",
+          "type": "INT",
+          "links": []
+        },
+        {
+          "name": "Y",
+          "type": "INT",
+          "links": []
+        },
+        {
+          "name": "WIDTH",
+          "type": "INT",
+          "links": []
+        },
+        {
+          "name": "HEIGHT",
+          "type": "INT",
+          "links": []
+        }
+      ],
+      "title": "取出透明物件＋原始座標",
+      "properties": {
+        "Node name for S&R": "SAM3BatchCropToObjects"
+      },
+      "widgets_values": [
+        2,
+        0.031
+      ]
+    },
+    {
+      "id": 17,
+      "type": "SaveImage",
+      "pos": [
+        2800,
+        280
+      ],
+      "size": [
+        360,
+        300
+      ],
+      "flags": {},
+      "order": 17,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 17
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": []
+        }
+      ],
+      "title": "✓ 01 文字 透明資產（確認後跑）",
+      "properties": {
+        "Node name for S&R": "SaveImage",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": [
+        "sam3_four_stage/text/asset"
+      ],
+      "color": "#28683e",
+      "bgcolor": "#173b25"
+    },
+    {
+      "id": 19,
+      "type": "SAM3MaskReview",
+      "pos": [
+        1550,
+        160
+      ],
+      "size": [
+        430,
+        330
+      ],
+      "flags": {},
+      "order": 19,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 5
+        },
+        {
+          "name": "masks",
+          "type": "MASK",
+          "link": 6
+        }
+      ],
+      "outputs": [
+        {
+          "name": "NUMBERED_PREVIEW",
+          "type": "IMAGE",
+          "links": [
+            7
+          ]
+        },
+        {
+          "name": "ASSET_MASKS",
+          "type": "MASK",
+          "links": [
+            10
+          ]
+        },
+        {
+          "name": "FILL_MASKS",
+          "type": "MASK",
+          "links": [
+            11
+          ]
+        },
+        {
+          "name": "SUMMARY",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "title": "01 文字 遮罩編號／排除／實際補圖範圍",
+      "properties": {
+        "Node name for S&R": "SAM3MaskReview"
+      },
+      "widgets_values": [
+        "",
+        4,
+        0.32
+      ]
+    },
+    {
+      "id": 21,
+      "type": "SAM3DeterministicInpaint",
+      "pos": [
+        2440,
+        650
+      ],
+      "size": [
+        420,
+        230
+      ],
+      "flags": {},
+      "order": 21,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 18
+        },
+        {
+          "name": "masks",
+          "type": "MASK",
+          "link": 19
+        }
+      ],
+      "outputs": [
+        {
+          "name": "INPAINTED_IMAGE",
+          "type": "IMAGE",
+          "links": [
+            20,
+            23,
+            25,
+            29
+          ]
+        }
+      ],
+      "title": "01 文字 確定性補洞（不生成新內容）",
+      "properties": {
+        "Node name for S&R": "SAM3DeterministicInpaint"
+      },
+      "widgets_values": [
+        "telea",
+        5,
+        20
+      ]
+    },
+    {
+      "id": 22,
+      "type": "SaveImage",
+      "pos": [
+        2890,
+        650
+      ],
+      "size": [
+        360,
+        300
+      ],
+      "flags": {},
+      "order": 22,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 20
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": []
+        }
+      ],
+      "title": "01 文字 補圖結果（檢查用）",
+      "properties": {
+        "Node name for S&R": "SaveImage",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": [
+        "sam3_four_stage/text/filled"
+      ],
+      "color": "#3d5875",
+      "bgcolor": "#223548"
+    },
+    {
+      "id": 23,
+      "type": "CLIPTextEncode",
+      "pos": [
+        3230,
+        60
+      ],
+      "size": [
+        390,
+        180
+      ],
+      "flags": {},
+      "order": 23,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 21
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "links": [
+            24
+          ]
+        }
+      ],
+      "title": "02 icon SAM3 提示詞",
+      "properties": {
+        "Node name for S&R": "CLIPTextEncode",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": [
+        "icon:20, close icon:2, coin icon:5, play icon:2"
+      ]
+    },
+    {
+      "id": 24,
+      "type": "SAM3_Detect",
+      "pos": [
+        3660,
+        40
+      ],
+      "size": [
+        300,
+        300
+      ],
+      "flags": {},
+      "order": 24,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 22
+        },
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 23
+        },
+        {
+          "name": "conditioning",
+          "type": "CONDITIONING",
+          "shape": 7,
+          "link": 24
+        },
+        {
+          "name": "bboxes",
+          "type": "BOUNDING_BOX",
+          "shape": 7,
+          "link": null
+        },
+        {
+          "name": "positive_coords",
+          "type": "STRING",
+          "shape": 7,
+          "link": null
+        },
+        {
+          "name": "negative_coords",
+          "type": "STRING",
+          "shape": 7,
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "masks",
+          "type": "MASK",
+          "links": [
+            26
+          ]
+        },
+        {
+          "name": "bboxes",
+          "type": "BOUNDING_BOX",
+          "links": []
+        }
+      ],
+      "title": "02 icon 分割（individual masks）",
+      "properties": {
+        "Node name for S&R": "SAM3_Detect",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": [
+        0.25,
+        0,
+        true
+      ]
+    },
+    {
+      "id": 26,
+      "type": "SaveImage",
+      "pos": [
+        4450,
+        20
+      ],
+      "size": [
+        360,
+        300
+      ],
+      "flags": {},
+      "order": 26,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 27
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": [
+            28
+          ]
+        }
+      ],
+      "title": "▶ 02 icon 編號 Preview（必須先跑）",
+      "properties": {
+        "Node name for S&R": "SaveImage",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": [
+        "sam3_four_stage/icon/preview"
+      ],
+      "color": "#8b2f2f",
+      "bgcolor": "#4b1f1f"
+    },
+    {
+      "id": 27,
+      "type": "InvertMask",
+      "pos": [
+        4000,
+        370
+      ],
+      "size": [
+        260,
+        80
+      ],
+      "flags": {},
+      "order": 27,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "mask",
+          "type": "MASK",
+          "link": 32
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": [
+            34
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "InvertMask",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 28,
+      "type": "JoinImageWithAlpha",
+      "pos": [
+        4290,
+        370
+      ],
+      "size": [
+        290,
+        100
+      ],
+      "flags": {},
+      "order": 28,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 33
+        },
+        {
+          "name": "alpha",
+          "type": "MASK",
+          "link": 34
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            35
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "JoinImageWithAlpha",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 29,
+      "type": "SAM3BatchCropToObjects",
+      "pos": [
+        4890,
+        310
+      ],
+      "size": [
+        340,
+        240
+      ],
+      "flags": {},
+      "order": 29,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 35
+        },
+        {
+          "name": "masks",
+          "type": "MASK",
+          "link": 36
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGES",
+          "type": "IMAGE",
+          "links": [
+            37
+          ]
+        },
+        {
+          "name": "MASKS",
+          "type": "MASK",
+          "links": []
+        },
+        {
+          "name": "X",
+          "type": "INT",
+          "links": []
+        },
+        {
+          "name": "Y",
+          "type": "INT",
+          "links": []
+        },
+        {
+          "name": "WIDTH",
+          "type": "INT",
+          "links": []
+        },
+        {
+          "name": "HEIGHT",
+          "type": "INT",
+          "links": []
+        }
+      ],
+      "title": "取出透明物件＋原始座標",
+      "properties": {
+        "Node name for S&R": "SAM3BatchCropToObjects"
+      },
+      "widgets_values": [
+        2,
+        0.031
+      ]
+    },
+    {
+      "id": 30,
+      "type": "SaveImage",
+      "pos": [
+        5250,
+        280
+      ],
+      "size": [
+        360,
+        300
+      ],
+      "flags": {},
+      "order": 30,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 37
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": []
+        }
+      ],
+      "title": "✓ 02 icon 透明資產（確認後跑）",
+      "properties": {
+        "Node name for S&R": "SaveImage",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": [
+        "sam3_four_stage/icon/asset"
+      ],
+      "color": "#28683e",
+      "bgcolor": "#173b25"
+    },
+    {
+      "id": 32,
+      "type": "SAM3MaskReview",
+      "pos": [
+        4000,
+        160
+      ],
+      "size": [
+        430,
+        330
+      ],
+      "flags": {},
+      "order": 32,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 25
+        },
+        {
+          "name": "masks",
+          "type": "MASK",
+          "link": 26
+        }
+      ],
+      "outputs": [
+        {
+          "name": "NUMBERED_PREVIEW",
+          "type": "IMAGE",
+          "links": [
+            27
+          ]
+        },
+        {
+          "name": "ASSET_MASKS",
+          "type": "MASK",
+          "links": [
+            30
+          ]
+        },
+        {
+          "name": "FILL_MASKS",
+          "type": "MASK",
+          "links": [
+            31
+          ]
+        },
+        {
+          "name": "SUMMARY",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "title": "02 icon 遮罩編號／排除／實際補圖範圍",
+      "properties": {
+        "Node name for S&R": "SAM3MaskReview"
+      },
+      "widgets_values": [
+        "",
+        6,
+        0.32
+      ]
+    },
+    {
+      "id": 34,
+      "type": "SAM3DeterministicInpaint",
+      "pos": [
+        4890,
+        650
+      ],
+      "size": [
+        420,
+        230
+      ],
+      "flags": {},
+      "order": 34,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 38
+        },
+        {
+          "name": "masks",
+          "type": "MASK",
+          "link": 39
+        }
+      ],
+      "outputs": [
+        {
+          "name": "INPAINTED_IMAGE",
+          "type": "IMAGE",
+          "links": [
+            40,
+            43,
+            45,
+            49
+          ]
+        }
+      ],
+      "title": "02 icon 確定性補洞（不生成新內容）",
+      "properties": {
+        "Node name for S&R": "SAM3DeterministicInpaint"
+      },
+      "widgets_values": [
+        "telea",
+        7,
+        24
+      ]
+    },
+    {
+      "id": 35,
+      "type": "SaveImage",
+      "pos": [
+        5340,
+        650
+      ],
+      "size": [
+        360,
+        300
+      ],
+      "flags": {},
+      "order": 35,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 40
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": []
+        }
+      ],
+      "title": "02 icon 補圖結果（檢查用）",
+      "properties": {
+        "Node name for S&R": "SaveImage",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": [
+        "sam3_four_stage/icon/filled"
+      ],
+      "color": "#3d5875",
+      "bgcolor": "#223548"
+    },
+    {
+      "id": 36,
+      "type": "CLIPTextEncode",
+      "pos": [
+        5680,
+        60
+      ],
+      "size": [
+        390,
+        180
+      ],
+      "flags": {},
+      "order": 36,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 41
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "links": [
+            44
+          ]
+        }
+      ],
+      "title": "03 按鈕 SAM3 提示詞",
+      "properties": {
+        "Node name for S&R": "CLIPTextEncode",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": [
+        "large colored rounded purchase button at bottom:3"
+      ]
+    },
+    {
+      "id": 37,
+      "type": "SAM3_Detect",
+      "pos": [
+        6110,
+        40
+      ],
+      "size": [
+        300,
+        300
+      ],
+      "flags": {},
+      "order": 37,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 42
+        },
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 43
+        },
+        {
+          "name": "conditioning",
+          "type": "CONDITIONING",
+          "shape": 7,
+          "link": 44
+        },
+        {
+          "name": "bboxes",
+          "type": "BOUNDING_BOX",
+          "shape": 7,
+          "link": null
+        },
+        {
+          "name": "positive_coords",
+          "type": "STRING",
+          "shape": 7,
+          "link": null
+        },
+        {
+          "name": "negative_coords",
+          "type": "STRING",
+          "shape": 7,
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "masks",
+          "type": "MASK",
+          "links": [
+            46
+          ]
+        },
+        {
+          "name": "bboxes",
+          "type": "BOUNDING_BOX",
+          "links": []
+        }
+      ],
+      "title": "03 按鈕 分割（individual masks）",
+      "properties": {
+        "Node name for S&R": "SAM3_Detect",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": [
+        0.32,
+        0,
+        true
+      ]
+    },
+    {
+      "id": 39,
+      "type": "SaveImage",
+      "pos": [
+        6900,
+        20
+      ],
+      "size": [
+        360,
+        300
+      ],
+      "flags": {},
+      "order": 39,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 47
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": [
+            48
+          ]
+        }
+      ],
+      "title": "▶ 03 按鈕 編號 Preview（必須先跑）",
+      "properties": {
+        "Node name for S&R": "SaveImage",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": [
+        "sam3_four_stage/button/preview"
+      ],
+      "color": "#8b2f2f",
+      "bgcolor": "#4b1f1f"
+    },
+    {
+      "id": 40,
+      "type": "InvertMask",
+      "pos": [
+        6450,
+        370
+      ],
+      "size": [
+        260,
+        80
+      ],
+      "flags": {},
+      "order": 40,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "mask",
+          "type": "MASK",
+          "link": 52
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": [
+            54
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "InvertMask",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 41,
+      "type": "JoinImageWithAlpha",
+      "pos": [
+        6740,
+        370
+      ],
+      "size": [
+        290,
+        100
+      ],
+      "flags": {},
+      "order": 41,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 53
+        },
+        {
+          "name": "alpha",
+          "type": "MASK",
+          "link": 54
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            55
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "JoinImageWithAlpha",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 42,
+      "type": "SAM3BatchCropToObjects",
+      "pos": [
+        7340,
+        310
+      ],
+      "size": [
+        340,
+        240
+      ],
+      "flags": {},
+      "order": 42,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 55
+        },
+        {
+          "name": "masks",
+          "type": "MASK",
+          "link": 56
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGES",
+          "type": "IMAGE",
+          "links": [
+            57
+          ]
+        },
+        {
+          "name": "MASKS",
+          "type": "MASK",
+          "links": []
+        },
+        {
+          "name": "X",
+          "type": "INT",
+          "links": []
+        },
+        {
+          "name": "Y",
+          "type": "INT",
+          "links": []
+        },
+        {
+          "name": "WIDTH",
+          "type": "INT",
+          "links": []
+        },
+        {
+          "name": "HEIGHT",
+          "type": "INT",
+          "links": []
+        }
+      ],
+      "title": "取出透明物件＋原始座標",
+      "properties": {
+        "Node name for S&R": "SAM3BatchCropToObjects"
+      },
+      "widgets_values": [
+        2,
+        0.031
+      ]
+    },
+    {
+      "id": 43,
+      "type": "SaveImage",
+      "pos": [
+        7700,
+        280
+      ],
+      "size": [
+        360,
+        300
+      ],
+      "flags": {},
+      "order": 43,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 57
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": []
+        }
+      ],
+      "title": "✓ 03 按鈕 透明資產（確認後跑）",
+      "properties": {
+        "Node name for S&R": "SaveImage",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": [
+        "sam3_four_stage/button/asset"
+      ],
+      "color": "#28683e",
+      "bgcolor": "#173b25"
+    },
+    {
+      "id": 45,
+      "type": "SAM3MaskReview",
+      "pos": [
+        6450,
+        160
+      ],
+      "size": [
+        430,
+        330
+      ],
+      "flags": {},
+      "order": 45,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 45
+        },
+        {
+          "name": "masks",
+          "type": "MASK",
+          "link": 46
+        }
+      ],
+      "outputs": [
+        {
+          "name": "NUMBERED_PREVIEW",
+          "type": "IMAGE",
+          "links": [
+            47
+          ]
+        },
+        {
+          "name": "ASSET_MASKS",
+          "type": "MASK",
+          "links": [
+            50
+          ]
+        },
+        {
+          "name": "FILL_MASKS",
+          "type": "MASK",
+          "links": [
+            51
+          ]
+        },
+        {
+          "name": "SUMMARY",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "title": "03 按鈕 遮罩編號／排除／實際補圖範圍",
+      "properties": {
+        "Node name for S&R": "SAM3MaskReview"
+      },
+      "widgets_values": [
+        "",
+        6,
+        0.32
+      ]
+    },
+    {
+      "id": 47,
+      "type": "SAM3DeterministicInpaint",
+      "pos": [
+        7340,
+        650
+      ],
+      "size": [
+        420,
+        230
+      ],
+      "flags": {},
+      "order": 47,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 58
+        },
+        {
+          "name": "masks",
+          "type": "MASK",
+          "link": 59
+        }
+      ],
+      "outputs": [
+        {
+          "name": "INPAINTED_IMAGE",
+          "type": "IMAGE",
+          "links": [
+            60,
+            61,
+            62
+          ]
+        }
+      ],
+      "title": "03 按鈕 確定性補洞（不生成新內容）",
+      "properties": {
+        "Node name for S&R": "SAM3DeterministicInpaint"
+      },
+      "widgets_values": [
+        "gradient",
+        7,
+        28
+      ]
+    },
+    {
+      "id": 48,
+      "type": "SaveImage",
+      "pos": [
+        7790,
+        650
+      ],
+      "size": [
+        360,
+        300
+      ],
+      "flags": {},
+      "order": 48,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 60
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": []
+        }
+      ],
+      "title": "03 按鈕 補圖結果（檢查用）",
+      "properties": {
+        "Node name for S&R": "SaveImage",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": [
+        "sam3_four_stage/button/filled"
+      ],
+      "color": "#3d5875",
+      "bgcolor": "#223548"
+    },
+    {
+      "id": 49,
+      "type": "SaveImage",
+      "pos": [
+        8130,
+        100
+      ],
+      "size": [
+        360,
+        300
+      ],
+      "flags": {},
+      "order": 49,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 61
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": []
+        }
+      ],
+      "title": "▶ 04 背景 Preview（先確認）",
+      "properties": {
+        "Node name for S&R": "SaveImage",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": [
+        "sam3_four_stage/background/preview"
+      ],
+      "color": "#8b2f2f",
+      "bgcolor": "#4b1f1f"
+    },
+    {
+      "id": 50,
+      "type": "SaveImage",
+      "pos": [
+        8560,
+        100
+      ],
+      "size": [
+        360,
+        300
+      ],
+      "flags": {},
+      "order": 50,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 62
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": []
+        }
+      ],
+      "title": "✓ 04 儲存乾淨背景",
+      "properties": {
+        "Node name for S&R": "SaveImage",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": [
+        "sam3_four_stage/background/final"
+      ],
+      "color": "#28683e",
+      "bgcolor": "#173b25"
+    },
+    {
+      "id": 51,
+      "type": "SAM3ApprovalGate",
+      "pos": [
+        2000,
+        350
+      ],
+      "size": [
+        430,
+        210
+      ],
+      "flags": {},
+      "order": 51,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "preview_image",
+          "type": "IMAGE",
+          "link": 8
+        },
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 9
+        },
+        {
+          "name": "asset_masks",
+          "type": "MASK",
+          "link": 10
+        },
+        {
+          "name": "fill_masks",
+          "type": "MASK",
+          "link": 11
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            13,
+            18
+          ]
+        },
+        {
+          "name": "ASSET_MASKS",
+          "type": "MASK",
+          "links": [
+            12,
+            16
+          ]
+        },
+        {
+          "name": "FILL_MASKS",
+          "type": "MASK",
+          "links": [
+            19
+          ]
+        }
+      ],
+      "title": "⛔ 01 文字 確認遮罩後才核准",
+      "properties": {
+        "Node name for S&R": "SAM3ApprovalGate"
+      },
+      "widgets_values": [
+        false,
+        "01 文字"
+      ],
+      "color": "#8b2f2f",
+      "bgcolor": "#4b1f1f"
+    },
+    {
+      "id": 52,
+      "type": "SAM3ApprovalGate",
+      "pos": [
+        4450,
+        350
+      ],
+      "size": [
+        430,
+        210
+      ],
+      "flags": {},
+      "order": 52,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "preview_image",
+          "type": "IMAGE",
+          "link": 28
+        },
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 29
+        },
+        {
+          "name": "asset_masks",
+          "type": "MASK",
+          "link": 30
+        },
+        {
+          "name": "fill_masks",
+          "type": "MASK",
+          "link": 31
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            33,
+            38
+          ]
+        },
+        {
+          "name": "ASSET_MASKS",
+          "type": "MASK",
+          "links": [
+            32,
+            36
+          ]
+        },
+        {
+          "name": "FILL_MASKS",
+          "type": "MASK",
+          "links": [
+            39
+          ]
+        }
+      ],
+      "title": "⛔ 02 icon 確認遮罩後才核准",
+      "properties": {
+        "Node name for S&R": "SAM3ApprovalGate"
+      },
+      "widgets_values": [
+        false,
+        "02 icon"
+      ],
+      "color": "#8b2f2f",
+      "bgcolor": "#4b1f1f"
+    },
+    {
+      "id": 53,
+      "type": "SAM3ApprovalGate",
+      "pos": [
+        6900,
+        350
+      ],
+      "size": [
+        430,
+        210
+      ],
+      "flags": {},
+      "order": 53,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "preview_image",
+          "type": "IMAGE",
+          "link": 48
+        },
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 49
+        },
+        {
+          "name": "asset_masks",
+          "type": "MASK",
+          "link": 50
+        },
+        {
+          "name": "fill_masks",
+          "type": "MASK",
+          "link": 51
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            53,
+            58
+          ]
+        },
+        {
+          "name": "ASSET_MASKS",
+          "type": "MASK",
+          "links": [
+            52,
+            56
+          ]
+        },
+        {
+          "name": "FILL_MASKS",
+          "type": "MASK",
+          "links": [
+            59
+          ]
+        }
+      ],
+      "title": "⛔ 03 按鈕 確認遮罩後才核准",
+      "properties": {
+        "Node name for S&R": "SAM3ApprovalGate"
+      },
+      "widgets_values": [
+        false,
+        "03 按鈕"
+      ],
+      "color": "#8b2f2f",
+      "bgcolor": "#4b1f1f"
+    }
+  ],
+  "links": [
+    [
+      1,
+      2,
+      1,
+      10,
+      0,
+      "CLIP"
+    ],
+    [
+      2,
+      2,
+      0,
+      11,
+      0,
+      "MODEL"
+    ],
+    [
+      3,
+      1,
+      0,
+      11,
+      1,
+      "IMAGE"
+    ],
+    [
+      4,
+      10,
+      0,
+      11,
+      2,
+      "CONDITIONING"
+    ],
+    [
+      5,
+      1,
+      0,
+      19,
+      0,
+      "IMAGE"
+    ],
+    [
+      6,
+      11,
+      0,
+      19,
+      1,
+      "MASK"
+    ],
+    [
+      7,
+      19,
+      0,
+      13,
+      0,
+      "IMAGE"
+    ],
+    [
+      8,
+      13,
+      0,
+      51,
+      0,
+      "IMAGE"
+    ],
+    [
+      9,
+      1,
+      0,
+      51,
+      1,
+      "IMAGE"
+    ],
+    [
+      10,
+      19,
+      1,
+      51,
+      2,
+      "MASK"
+    ],
+    [
+      11,
+      19,
+      2,
+      51,
+      3,
+      "MASK"
+    ],
+    [
+      12,
+      51,
+      1,
+      14,
+      0,
+      "MASK"
+    ],
+    [
+      13,
+      51,
+      0,
+      15,
+      0,
+      "IMAGE"
+    ],
+    [
+      14,
+      14,
+      0,
+      15,
+      1,
+      "MASK"
+    ],
+    [
+      15,
+      15,
+      0,
+      16,
+      0,
+      "IMAGE"
+    ],
+    [
+      16,
+      51,
+      1,
+      16,
+      1,
+      "MASK"
+    ],
+    [
+      17,
+      16,
+      0,
+      17,
+      0,
+      "IMAGE"
+    ],
+    [
+      18,
+      51,
+      0,
+      21,
+      0,
+      "IMAGE"
+    ],
+    [
+      19,
+      51,
+      2,
+      21,
+      1,
+      "MASK"
+    ],
+    [
+      20,
+      21,
+      0,
+      22,
+      0,
+      "IMAGE"
+    ],
+    [
+      21,
+      2,
+      1,
+      23,
+      0,
+      "CLIP"
+    ],
+    [
+      22,
+      2,
+      0,
+      24,
+      0,
+      "MODEL"
+    ],
+    [
+      23,
+      21,
+      0,
+      24,
+      1,
+      "IMAGE"
+    ],
+    [
+      24,
+      23,
+      0,
+      24,
+      2,
+      "CONDITIONING"
+    ],
+    [
+      25,
+      21,
+      0,
+      32,
+      0,
+      "IMAGE"
+    ],
+    [
+      26,
+      24,
+      0,
+      32,
+      1,
+      "MASK"
+    ],
+    [
+      27,
+      32,
+      0,
+      26,
+      0,
+      "IMAGE"
+    ],
+    [
+      28,
+      26,
+      0,
+      52,
+      0,
+      "IMAGE"
+    ],
+    [
+      29,
+      21,
+      0,
+      52,
+      1,
+      "IMAGE"
+    ],
+    [
+      30,
+      32,
+      1,
+      52,
+      2,
+      "MASK"
+    ],
+    [
+      31,
+      32,
+      2,
+      52,
+      3,
+      "MASK"
+    ],
+    [
+      32,
+      52,
+      1,
+      27,
+      0,
+      "MASK"
+    ],
+    [
+      33,
+      52,
+      0,
+      28,
+      0,
+      "IMAGE"
+    ],
+    [
+      34,
+      27,
+      0,
+      28,
+      1,
+      "MASK"
+    ],
+    [
+      35,
+      28,
+      0,
+      29,
+      0,
+      "IMAGE"
+    ],
+    [
+      36,
+      52,
+      1,
+      29,
+      1,
+      "MASK"
+    ],
+    [
+      37,
+      29,
+      0,
+      30,
+      0,
+      "IMAGE"
+    ],
+    [
+      38,
+      52,
+      0,
+      34,
+      0,
+      "IMAGE"
+    ],
+    [
+      39,
+      52,
+      2,
+      34,
+      1,
+      "MASK"
+    ],
+    [
+      40,
+      34,
+      0,
+      35,
+      0,
+      "IMAGE"
+    ],
+    [
+      41,
+      2,
+      1,
+      36,
+      0,
+      "CLIP"
+    ],
+    [
+      42,
+      2,
+      0,
+      37,
+      0,
+      "MODEL"
+    ],
+    [
+      43,
+      34,
+      0,
+      37,
+      1,
+      "IMAGE"
+    ],
+    [
+      44,
+      36,
+      0,
+      37,
+      2,
+      "CONDITIONING"
+    ],
+    [
+      45,
+      34,
+      0,
+      45,
+      0,
+      "IMAGE"
+    ],
+    [
+      46,
+      37,
+      0,
+      45,
+      1,
+      "MASK"
+    ],
+    [
+      47,
+      45,
+      0,
+      39,
+      0,
+      "IMAGE"
+    ],
+    [
+      48,
+      39,
+      0,
+      53,
+      0,
+      "IMAGE"
+    ],
+    [
+      49,
+      34,
+      0,
+      53,
+      1,
+      "IMAGE"
+    ],
+    [
+      50,
+      45,
+      1,
+      53,
+      2,
+      "MASK"
+    ],
+    [
+      51,
+      45,
+      2,
+      53,
+      3,
+      "MASK"
+    ],
+    [
+      52,
+      53,
+      1,
+      40,
+      0,
+      "MASK"
+    ],
+    [
+      53,
+      53,
+      0,
+      41,
+      0,
+      "IMAGE"
+    ],
+    [
+      54,
+      40,
+      0,
+      41,
+      1,
+      "MASK"
+    ],
+    [
+      55,
+      41,
+      0,
+      42,
+      0,
+      "IMAGE"
+    ],
+    [
+      56,
+      53,
+      1,
+      42,
+      1,
+      "MASK"
+    ],
+    [
+      57,
+      42,
+      0,
+      43,
+      0,
+      "IMAGE"
+    ],
+    [
+      58,
+      53,
+      0,
+      47,
+      0,
+      "IMAGE"
+    ],
+    [
+      59,
+      53,
+      2,
+      47,
+      1,
+      "MASK"
+    ],
+    [
+      60,
+      47,
+      0,
+      48,
+      0,
+      "IMAGE"
+    ],
+    [
+      61,
+      47,
+      0,
+      49,
+      0,
+      "IMAGE"
+    ],
+    [
+      62,
+      47,
+      0,
+      50,
+      0,
+      "IMAGE"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.38,
+      "offset": [
+        40,
+        80
+      ]
+    },
+    "frontendVersion": "1.48.7"
+  },
+  "version": 0.4,
+  "definitions": {
+    "subgraphs": []
+  }
+}

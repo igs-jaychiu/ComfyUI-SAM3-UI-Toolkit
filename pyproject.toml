@@ -1,0 +1,18 @@
+[project]
+name = "sam3-ui-toolkit"
+version = "0.1.0"
+description = "Review, filter, crop, and deterministically repair UI assets segmented by native ComfyUI SAM3 nodes."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "opencv-python>=4.8",
+]
+
+[project.urls]
+Repository = "https://github.com/igs-jaychiu/ComfyUI-SAM3-UI-Toolkit"
+Documentation = "https://github.com/igs-jaychiu/ComfyUI-SAM3-UI-Toolkit#readme"
+Issues = "https://github.com/igs-jaychiu/ComfyUI-SAM3-UI-Toolkit/issues"
+
+[tool.comfy]
+PublisherId = "replace-with-your-comfy-publisher-id"
+DisplayName = "SAM3 UI Toolkit"
