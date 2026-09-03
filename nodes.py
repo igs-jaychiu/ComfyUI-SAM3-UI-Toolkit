@@ -652,6 +652,26 @@ class SAM3PromptBank:
     CATEGORY = "image/detection"
 
     @staticmethod
+    def _unwrap(result):
+        """Return a plain tuple from whatever a node hands back.
+
+        Core nodes on the V3 schema return a NodeOutput wrapper rather than a tuple, so reach
+        through it instead of assuming either shape.
+        """
+        if isinstance(result, (tuple, list)):
+            return tuple(result)
+        for attr in ("result", "results", "values", "outputs"):
+            value = getattr(result, attr, None)
+            if isinstance(value, (tuple, list)):
+                return tuple(value)
+        if hasattr(result, "__getitem__"):
+            try:
+                return (result[0],)
+            except Exception:  # noqa: BLE001 - fall through to the single-value case
+                pass
+        return (result,)
+
+    @staticmethod
     def _detector():
         try:
             from comfy_extras.nodes_sam3 import SAM3_Detect
@@ -685,7 +705,10 @@ class SAM3PromptBank:
             result = detect(model=model, image=image, conditioning=conditioning,
                             threshold=float(thr) * float(threshold_scale),
                             refine_iterations=int(refine_iterations), individual_masks=True)
-            masks = result[0] if isinstance(result, (tuple, list)) else result
+            unwrapped = self._unwrap(result)
+            masks = unwrapped[0] if unwrapped else None
+            if masks is not None and not hasattr(masks, "ndim"):
+                masks = None
             if masks is None:
                 notes.append(f"{name}:0")
                 continue
