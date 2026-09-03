@@ -569,6 +569,143 @@ class SAM3AutoFilterMasks:
         return (_bool_list_to_masks(kept, masks, size), len(kept), summary)
 
 
+DEFAULT_PROMPT_BANK = """# name | prompt | threshold      (lines starting with # are ignored)
+text_a   | text:30                                              | 0.25
+text_b   | text:60                                              | 0.24
+label_a  | text label:20, number:10                             | 0.25
+label_b  | text label:30, number:20                             | 0.24
+icon_a   | icon:20                                              | 0.28
+icon_b   | icon:30                                              | 0.26
+round_a  | circular icon button:10                              | 0.30
+round_b  | circular button:15, round badge:12                   | 0.28
+button_a | button:12                                            | 0.30
+button_b | button:15                                            | 0.28
+banner_a | ribbon banner:8                                      | 0.30
+banner_b | ribbon banner:10, title plate:6                      | 0.28
+card_a   | card:10                                              | 0.30
+card_b   | card:12, table:6                                     | 0.28
+panel_a  | panel:8                                              | 0.30
+panel_b  | panel:10, window frame:4                             | 0.28
+char_a   | cartoon character:4, mascot:3                        | 0.30
+char_b   | cartoon character:5, mascot:4, animal:4              | 0.28
+object_a | decorative object:15                                 | 0.30
+object_b | decorative object:20                                 | 0.28
+coin_a   | coin:10, gem:6, star:8                               | 0.30
+coin_b   | coin:12, gem:8, star:10, badge:10                    | 0.28
+bar_a    | slider:6, progress bar:6, toggle switch:4            | 0.30
+bar_b    | slider:8, progress bar:8, toggle switch:6, scroll bar:4 | 0.28
+avatar_a | avatar portrait:8                                    | 0.30
+avatar_b | avatar portrait:10                                   | 0.28
+row_a    | table row:10, list row:10                            | 0.30
+nature_b | food:8, plant:6, lantern:6, moon:2                   | 0.28
+"""
+
+
+def _parse_prompt_bank(text):
+    """Parse 'name | prompt | threshold' lines into probe tuples."""
+    probes = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = [x.strip() for x in line.split("|")]
+        if len(parts) == 1:
+            name, prompt, thr = f"p{len(probes) + 1}", parts[0], 0.28
+        elif len(parts) == 2:
+            name, prompt, thr = parts[0], parts[1], 0.28
+        else:
+            try:
+                thr = float(parts[2])
+            except ValueError:
+                thr = 0.28
+            name, prompt = parts[0], parts[1]
+        if prompt:
+            probes.append((name, prompt, thr))
+    return probes
+
+
+class SAM3PromptBank:
+    """Run a whole bank of SAM3 text prompts in one node and pool the masks.
+
+    Wiring one CLIPTextEncode plus one SAM3_Detect per prompt made the prompt list a rewiring
+    job and over half the graph. Here the list is a text field: edit a line, rerun. The pooled
+    output feeds SAM3AutoLayerMasks directly, and every mask keeps the probe name that found it
+    so the consensus vote and the asset labels stay meaningful.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "model": ("MODEL",),
+                "clip": ("CLIP",),
+                "image": ("IMAGE",),
+                "prompts": ("STRING", {"default": DEFAULT_PROMPT_BANK, "multiline": True}),
+                "refine_iterations": ("INT", {"default": 0, "min": 0, "max": 5, "step": 1}),
+                "threshold_scale": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 3.0, "step": 0.05}),
+            }
+        }
+
+    RETURN_TYPES = ("MASK", "STRING", "STRING")
+    RETURN_NAMES = ("MASKS", "LABELS_JSON", "SUMMARY")
+    FUNCTION = "run"
+    CATEGORY = "image/detection"
+
+    @staticmethod
+    def _detector():
+        try:
+            from comfy_extras.nodes_sam3 import SAM3_Detect
+        except ImportError as error:
+            raise RuntimeError(
+                "SAM3PromptBank needs the built-in SAM3 nodes (comfy_extras.nodes_sam3). "
+                "Update ComfyUI to a build that ships SAM3."
+            ) from error
+        instance = SAM3_Detect()
+        entry = getattr(SAM3_Detect, "FUNCTION", None)
+        if not entry or not hasattr(instance, entry):
+            raise RuntimeError("SAM3_Detect does not expose its FUNCTION entry point")
+        return getattr(instance, entry)
+
+    def run(self, model, clip, image, prompts, refine_iterations=0, threshold_scale=1.0):
+        probes = _parse_prompt_bank(prompts)
+        if not probes:
+            raise ValueError("SAM3PromptBank: no usable prompt lines")
+        detect = self._detector()
+        if image.ndim == 3:
+            image = image.unsqueeze(0)
+
+        batches, labels, notes = [], [], []
+        for name, prompt, thr in probes:
+            tokens = clip.tokenize(prompt)
+            if hasattr(clip, "encode_from_tokens_scheduled"):
+                conditioning = clip.encode_from_tokens_scheduled(tokens)
+            else:  # older cores
+                cond, pooled = clip.encode_from_tokens(tokens, return_pooled=True)
+                conditioning = [[cond, {"pooled_output": pooled}]]
+            result = detect(model=model, image=image, conditioning=conditioning,
+                            threshold=float(thr) * float(threshold_scale),
+                            refine_iterations=int(refine_iterations), individual_masks=True)
+            masks = result[0] if isinstance(result, (tuple, list)) else result
+            if masks is None:
+                notes.append(f"{name}:0")
+                continue
+            if masks.ndim == 2:
+                masks = masks.unsqueeze(0)
+            if batches and masks.shape[-2:] != batches[0].shape[-2:]:
+                masks = F.interpolate(masks.unsqueeze(1), size=batches[0].shape[-2:],
+                                      mode="nearest").squeeze(1)
+            masks = masks.to(batches[0].device) if batches else masks
+            batches.append(masks)
+            labels.extend([name.split("_")[0]] * masks.shape[0])
+            notes.append(f"{name}:{masks.shape[0]}")
+
+        if not batches:
+            raise ValueError("SAM3PromptBank: every prompt returned zero masks")
+        pooled = torch.cat(batches, dim=0)
+        summary = f"probes={len(probes)} masks={pooled.shape[0]} | " + " ".join(notes)
+        return (pooled, json.dumps(labels), summary)
+
+
 class SAM3AutoLayerMasks:
     """Pool SAM3 masks from many prompts and split them into z-order layers automatically.
 
@@ -651,6 +788,8 @@ class SAM3CropToRGBA:
                 "matte": (["difference", "off"],),
                 "matte_low": ("FLOAT", {"default": 0.10, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "matte_high": ("FLOAT", {"default": 0.35, "min": 0.01, "max": 1.0, "step": 0.01}),
+                "align_siblings": ("BOOLEAN", {"default": True}),
+                "align_tolerance": ("FLOAT", {"default": 0.12, "min": 0.0, "max": 0.5, "step": 0.01}),
             },
             "optional": {
                 "meta_json": ("STRING", {"forceInput": True}),
@@ -663,8 +802,69 @@ class SAM3CropToRGBA:
     FUNCTION = "crop"
     CATEGORY = "image/crop"
 
+    @classmethod
+    def _sibling_sizes_global(cls, meta_json, tolerance=0.12):
+        """Group repeated elements across every layer, keyed by uid.
+
+        The three purchase buttons of a shop panel do not all land on the same layer - one holds
+        a play icon as well as its text, so it sits a level up. Grouping per layer would miss
+        them, while the crop window is free to agree across layers because it has no bearing on
+        the peel order.
+        """
+        try:
+            data = json.loads(meta_json)
+        except (TypeError, ValueError, AttributeError):
+            return {}
+        rows = [r for layer in data.values() for r in layer if isinstance(r, dict)]
+        if len(rows) < 2:
+            return {}
+        boxes = [(r["x"], r["y"], r["x"] + r["w"], r["y"] + r["h"]) for r in rows]
+        groups = cls._sibling_sizes(boxes, tolerance)
+        return {rows[i].get("uid"): size for i, size in groups.items() if rows[i].get("uid")}
+
+    @staticmethod
+    def _sibling_sizes(boxes, tolerance=0.12):
+        """Find repeated layout elements and agree one crop size for each group.
+
+        Three columns of the same card come back 214, 200 and 217 px wide because the masks are
+        traced independently. Anything that is the same element repeated across a row or column
+        should export at one size, or the sprites will not line up in the game.
+        """
+        groups = {}
+        idx = [i for i, b in enumerate(boxes) if b is not None]
+        used = set()
+        for i in idx:
+            if i in used:
+                continue
+            bi = boxes[i]
+            wi, hi = bi[2] - bi[0], bi[3] - bi[1]
+            members = [i]
+            for j in idx:
+                if j == i or j in used:
+                    continue
+                bj = boxes[j]
+                wj, hj = bj[2] - bj[0], bj[3] - bj[1]
+                if abs(wj - wi) > tolerance * max(wi, wj):
+                    continue
+                if abs(hj - hi) > tolerance * max(hi, hj):
+                    continue
+                # a repeated element sits on a shared baseline (a row) or a shared edge (a column)
+                same_row = abs(bj[1] - bi[1]) <= 0.25 * max(hi, hj)
+                same_col = abs(bj[0] - bi[0]) <= 0.25 * max(wi, wj)
+                if same_row or same_col:
+                    members.append(j)
+            if len(members) < 2:
+                continue
+            tw = max(boxes[m][2] - boxes[m][0] for m in members)
+            th = max(boxes[m][3] - boxes[m][1] for m in members)
+            for m in members:
+                groups[m] = (tw, th)
+                used.add(m)
+        return groups
+
     def crop(self, image, masks, padding=2, feather=1, coords_prefix="", layer=0,
-             matte="difference", matte_low=0.10, matte_high=0.35, meta_json=""):
+             matte="difference", matte_low=0.10, matte_high=0.35,
+             align_siblings=True, align_tolerance=0.12, meta_json=""):
         import cv2
         import numpy as np
 
@@ -681,10 +881,22 @@ class SAM3CropToRGBA:
                 meta_rows = json.loads(meta_json).get(f"layer_{int(layer)}", [])
             except (TypeError, ValueError, AttributeError):
                 meta_rows = []
+        boxes = [auto_filter.bbox(m) for m in bool_masks]
+        target = {}
+        if align_siblings:
+            by_uid = self._sibling_sizes_global(meta_json, float(align_tolerance)) if meta_json else {}
+            if by_uid and meta_rows:
+                for i, row in enumerate(meta_rows):
+                    size = by_uid.get(row.get("uid"))
+                    if size:
+                        target[i] = size
+            else:
+                target = self._sibling_sizes(boxes, float(align_tolerance))
+
         images = []
         coords = []
         for index, mask in enumerate(bool_masks, 1):
-            box = auto_filter.bbox(mask)
+            box = boxes[index - 1]
             if box is None:
                 continue
             x1, y1, x2, y2 = box
@@ -692,6 +904,15 @@ class SAM3CropToRGBA:
             y1 = max(0, y1 - padding)
             x2 = min(width, x2 + padding)
             y2 = min(height, y2 + padding)
+            if (index - 1) in target:
+                tw, th = target[index - 1]
+                # grow the crop window symmetrically to the group size, so three cards that are
+                # the same card in the layout come out as three same-sized sprites
+                cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+                nx1, nx2 = int(round(cx - tw / 2.0)), int(round(cx + tw / 2.0))
+                ny1, ny2 = int(round(cy - th / 2.0)), int(round(cy + th / 2.0))
+                if nx1 >= 0 and ny1 >= 0 and nx2 <= width and ny2 <= height:
+                    x1, y1, x2, y2 = nx1, ny1, nx2, ny2
             if matte == "difference":
                 # SAM3 hands back text as a filled plate; recover the real glyph shape by
                 # measuring how far each pixel departs from an estimate of what is behind it
@@ -755,6 +976,7 @@ class SAM3DeterministicInpaint:
                 ),
             },
             "optional": {
+                "auto_scale": ("BOOLEAN", {"default": False}),
                 "grow": ("INT", {"default": 0, "min": 0, "max": 64, "step": 1}),
                 "shadow_reach": ("INT", {"default": 0, "min": 0, "max": 128, "step": 1}),
                 "shadow_thresh": ("FLOAT", {"default": 14.0, "min": 1.0, "max": 128.0, "step": 0.5}),
@@ -812,9 +1034,31 @@ class SAM3DeterministicInpaint:
                 result[cy, cx, channel] = component_design @ coefficients
         return np.clip(result, 0, 255).astype(np.uint8)
 
+    @staticmethod
+    def _auto_scale(bool_masks):
+        """Pick grow / shadow_reach from how big this layer's elements actually are.
+
+        A 25px tall label and a 480px card need the same couple of pixels to swallow their
+        anti-aliased edge, but wildly different reach to swallow their drop shadow, so the edge
+        term stays nearly constant while the shadow term tracks element size.
+        """
+        import numpy as np
+
+        dims = []
+        for m in bool_masks:
+            box = auto_filter.bbox(m)
+            if box:
+                dims.append(min(box[2] - box[0], box[3] - box[1]))
+        if not dims:
+            return 4, 12
+        typical = float(np.median(dims))
+        grow = int(round(min(8.0, max(3.0, 3.0 + typical / 150.0))))
+        reach = int(round(min(36.0, max(8.0, typical * 0.12))))
+        return grow, reach
+
     def inpaint(self, image, masks, method="interp", radius=5, gradient_ring=20, grow=0,
                 shadow_reach=0, shadow_thresh=14.0, bg_std_max=30.0, max_expand=0.6,
-                sim_scale=12.0, blur_scale=0.25, blur_max=41):
+                sim_scale=12.0, blur_scale=0.25, blur_max=41, auto_scale=False):
         import cv2
         import numpy as np
 
@@ -824,6 +1068,8 @@ class SAM3DeterministicInpaint:
             masks = masks.unsqueeze(0)
         size = tuple(image.shape[1:3])
         bool_masks = _masks_to_bool_list(masks, size)
+        if auto_scale:
+            grow, shadow_reach = self._auto_scale(bool_masks)
 
         outputs = []
         for source in image[..., :3]:
@@ -875,12 +1121,14 @@ NODE_CLASS_MAPPINGS = {
     "SAM3AutoFilterMasks": SAM3AutoFilterMasks,
     "SAM3CropToRGBA": SAM3CropToRGBA,
     "SAM3AutoLayerMasks": SAM3AutoLayerMasks,
+    "SAM3PromptBank": SAM3PromptBank,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "SAM3MaskBatchConcat": "Concat SAM3 Mask Batches",
     "SAM3AutoFilterMasks": "Auto Filter SAM3 Masks",
     "SAM3CropToRGBA": "Crop SAM3 Masks To RGBA Sprites",
     "SAM3AutoLayerMasks": "Auto Layer SAM3 Masks (z-order)",
+    "SAM3PromptBank": "SAM3 Prompt Bank (run many prompts)",
     "SAM3BatchCropToObjects": "Crop SAM3 Batch To Objects",
     "SAM3MergeMaskBatch": "Merge SAM3 Mask Batch",
     "SAM3SelectionOverlay": "Overlay SAM3 Selection",
