@@ -811,6 +811,8 @@ class SAM3CropToRGBA:
                 "matte": (["difference", "off"],),
                 "matte_low": ("FLOAT", {"default": 0.10, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "matte_high": ("FLOAT", {"default": 0.35, "min": 0.01, "max": 1.0, "step": 0.01}),
+                "matte_min_coverage": ("FLOAT", {"default": 0.40, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "matte_tight_edge": ("FLOAT", {"default": 0.90, "min": 0.0, "max": 5.0, "step": 0.05}),
                 "align_siblings": ("BOOLEAN", {"default": True}),
                 "align_tolerance": ("FLOAT", {"default": 0.12, "min": 0.0, "max": 0.5, "step": 0.01}),
             },
@@ -887,6 +889,7 @@ class SAM3CropToRGBA:
 
     def crop(self, image, masks, padding=2, feather=1, coords_prefix="", layer=0,
              matte="difference", matte_low=0.10, matte_high=0.35,
+             matte_min_coverage=0.40, matte_tight_edge=0.90,
              align_siblings=True, align_tolerance=0.12, meta_json=""):
         import cv2
         import numpy as np
@@ -939,8 +942,9 @@ class SAM3CropToRGBA:
             if matte == "difference":
                 # SAM3 hands back text as a filled plate; recover the real glyph shape by
                 # measuring how far each pixel departs from an estimate of what is behind it
-                soft = auto_filter.difference_matte(rgb, mask, low=float(matte_low),
-                                                    high=float(matte_high))
+                soft = auto_filter.difference_matte(
+                    rgb, mask, low=float(matte_low), high=float(matte_high),
+                    min_coverage=float(matte_min_coverage), tight_edge=float(matte_tight_edge))
                 alpha = (soft[y1:y2, x1:x2] * 255).round().astype(np.uint8)
             else:
                 alpha = (mask[y1:y2, x1:x2] * 255).astype(np.uint8)

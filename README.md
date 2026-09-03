@@ -58,6 +58,20 @@ D:\ComfyUI\python_embeded\python.exe -m pip install -r D:\ComfyUI\ComfyUI\custom
 - **Deterministic UI Inpaint** 新增 `interp` 方法（預設）：邊緣感知線性插值＋內部平滑，
   `grow` / `shadow_reach` 讓反鋸齒邊與軟陰影一起被移除；`bg_std_max` / `max_expand` 防止吃到框線或按鈕光澤。
 
+### V6 新增 / 強化
+
+- **SAM3 Prompt Bank**：一個節點跑完整份提示詞清單,格式 `名稱 | 提示詞 | 門檻`,一行一個。
+  改提示詞只要編輯文字框,不用重拉線。工作流節點數從 114 降到 62。
+- **差異遮罩 alpha**：SAM3 給文字的是填滿的方塊,切出來會帶著底板。Crop 節點改用
+  「估出底下的底色再依色差算 alpha」,把字形摳出來並保留抗鋸齒。文字不透明佔比 0.70 → 0.40。
+  三道護欄避免誤傷實心物件:遮罩邊界已貼合真實邊緣就跳過、挖掉的區域若被自己包住就跳過、
+  保留比例過低就退回原遮罩。
+- **同款元件對齊**:重複版面的元件輸出成同尺寸,跨層歸組。實測商城圖卡片寬度差 8.1% → 0.9%,
+  按鈕 1.7%/14.7% → 0%/0%,緞帶 1.0%/2.4% → 0%/0%。
+- **補洞自適應**:`auto_scale` 依該層元件實際大小推算外擴與陰影範圍。場景圖背景殘差 0.094 → 0.040。
+- **分層上限 8 層**,並在座標 JSON 帶上 `uid`、`layer`、`label`、`votes`、`parent`、`area`,
+  可以直接重建 UI 樹,也能事後依票數過濾而不必重跑偵測。
+
 ### 通用自動分層節點（V5）
 
 - **Auto Layer SAM3 Masks (z-order)**：把多個提示詞的遮罩倒進同一個池子，依**包含關係**自動排出
@@ -81,7 +95,14 @@ D:\ComfyUI\python_embeded\python.exe -m pip install -r D:\ComfyUI\ComfyUI\custom
 
 ## 範例 Workflow
 
-### V5 通用自動分層（建議）
+### V6 提示詞庫 + 自動分層（建議）
+
+`example_workflows/SAM3_4_Prompt_Bank_Auto_Layer_V6.json`
+
+62 個節點。提示詞集中在一個文字框,8 層 z-order,每層輸出 `asset`（乾淨容器）與
+`flat`（原圖外觀）兩份透明 PNG 加座標 JSON。5 張測試圖抓取率 98.3%,單張最低 95%。
+
+### V5 通用自動分層（舊版）
 
 `example_workflows/SAM3_3_Generic_Auto_Layer_V5.json`
 

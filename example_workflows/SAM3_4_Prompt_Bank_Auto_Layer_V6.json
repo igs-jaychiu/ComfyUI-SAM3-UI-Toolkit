@@ -1,0 +1,3964 @@
+{
+ "last_node_id": 62,
+ "last_link_id": 110,
+ "nodes": [
+  {
+   "id": 1,
+   "type": "MarkdownNote",
+   "pos": [
+    -560,
+    -280
+   ],
+   "size": [
+    520,
+    420
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [],
+   "title": "V6 說明（先看）",
+   "properties": {
+    "Node name for S&R": "MarkdownNote"
+   },
+   "widgets_values": [
+    "# V6：一個提示詞庫 + 幾何自動分層\n\n**改提示詞只要編輯「提示詞庫」節點裡那個文字框**,一行一個 probe,格式是 `名稱 | 提示詞 | 門檻`。不用再拉線。\n\n所有 probe 跑在原圖上,遮罩倒進同一個池子,`Auto Layer` 依包含關係排出 z-order:\nLAYER_1 是葉節點(文字、圖示、道具),往上是承載它們的按鈕與緞帶、卡片、面板、外框。\n\n**每層輸出兩份透明 PNG**\n- `asset`:移除下層後才切,按鈕與卡片用這份,裡面沒有殘留文字。\n- `flat`:直接從原圖切,整段文字與 logo 用這份。\n\n**alpha 用差異遮罩還原真實形狀**。SAM3 給文字的是一塊填滿方塊,節點會估出文字底下的底色再依色差算 alpha,把字形摳出來,同時保留抗鋸齒。\n\n**同款元件會對齊成同尺寸**。三張版面相同的卡片、三顆按鈕會輸出成一樣大,不會因為遮罩各自描邊而差好幾像素。\n\n`min_votes=2` 是共識門檻,要兩個以上 probe 找到才算數。票數也寫進座標 JSON,可以事後自己過濾而不必重跑。\n座標 JSON 另外帶 `uid` 與 `parent`,可以直接重建 UI 樹。"
+   ]
+  },
+  {
+   "id": 2,
+   "type": "LoadImage",
+   "pos": [
+    -560,
+    60
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 1,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "links": [
+      3,
+      6,
+      9,
+      13,
+      17,
+      26,
+      39,
+      52,
+      65,
+      78,
+      91,
+      104
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "MASK",
+     "type": "MASK",
+     "links": [],
+     "slot_index": 1
+    }
+   ],
+   "title": "00 載入原始圖",
+   "properties": {
+    "Node name for S&R": "LoadImage"
+   },
+   "widgets_values": [
+    "sam3_ui_source.png",
+    "image"
+   ]
+  },
+  {
+   "id": 3,
+   "type": "CheckpointLoaderSimple",
+   "pos": [
+    -560,
+    300
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 2,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "MODEL",
+     "type": "MODEL",
+     "links": [
+      1
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "CLIP",
+     "type": "CLIP",
+     "links": [
+      2
+     ],
+     "slot_index": 1
+    },
+    {
+     "name": "VAE",
+     "type": "VAE",
+     "links": [],
+     "slot_index": 2
+    }
+   ],
+   "title": "原生 SAM3.1",
+   "properties": {
+    "Node name for S&R": "CheckpointLoaderSimple"
+   },
+   "widgets_values": [
+    "sam3.1_multiplex_fp16.safetensors"
+   ]
+  },
+  {
+   "id": 4,
+   "type": "SAM3PromptBank",
+   "pos": [
+    -60,
+    60
+   ],
+   "size": [
+    460,
+    320
+   ],
+   "flags": {},
+   "order": 3,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "model",
+     "type": "MODEL",
+     "link": 1
+    },
+    {
+     "name": "clip",
+     "type": "CLIP",
+     "link": 2
+    },
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 3
+    }
+   ],
+   "outputs": [
+    {
+     "name": "MASKS",
+     "type": "MASK",
+     "links": [
+      4
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "LABELS_JSON",
+     "type": "STRING",
+     "links": [
+      5
+     ],
+     "slot_index": 1
+    },
+    {
+     "name": "SUMMARY",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 2
+    }
+   ],
+   "title": "提示詞庫（全部提示詞跑在原圖）",
+   "properties": {
+    "Node name for S&R": "SAM3PromptBank"
+   },
+   "widgets_values": [
+    "# name | prompt | threshold      (lines starting with # are ignored)\ntext_a   | text:30                                              | 0.25\ntext_b   | text:60                                              | 0.24\nlabel_a  | text label:20, number:10                             | 0.25\nlabel_b  | text label:30, number:20                             | 0.24\nicon_a   | icon:20                                              | 0.28\nicon_b   | icon:30                                              | 0.26\nround_a  | circular icon button:10                              | 0.30\nround_b  | circular button:15, round badge:12                   | 0.28\nbutton_a | button:12                                            | 0.30\nbutton_b | button:15                                            | 0.28\nbanner_a | ribbon banner:8                                      | 0.30\nbanner_b | ribbon banner:10, title plate:6                      | 0.28\ncard_a   | card:10                                              | 0.30\ncard_b   | card:12, table:6                                     | 0.28\npanel_a  | panel:8                                              | 0.30\npanel_b  | panel:10, window frame:4                             | 0.28\nchar_a   | cartoon character:4, mascot:3                        | 0.30\nchar_b   | cartoon character:5, mascot:4, animal:4              | 0.28\nobject_a | decorative object:15                                 | 0.30\nobject_b | decorative object:20                                 | 0.28\ncoin_a   | coin:10, gem:6, star:8                               | 0.30\ncoin_b   | coin:12, gem:8, star:10, badge:10                    | 0.28\nbar_a    | slider:6, progress bar:6, toggle switch:4            | 0.30\nbar_b    | slider:8, progress bar:8, toggle switch:6, scroll bar:4 | 0.28\navatar_a | avatar portrait:8                                    | 0.30\navatar_b | avatar portrait:10                                   | 0.28\nrow_a    | table row:10, list row:10                            | 0.30\nnature_b | food:8, plant:6, lantern:6, moon:2                   | 0.28\n",
+    0,
+    1.0
+   ]
+  },
+  {
+   "id": 5,
+   "type": "SAM3AutoLayerMasks",
+   "pos": [
+    480,
+    60
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 4,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 4
+    },
+    {
+     "name": "labels_json",
+     "type": "STRING",
+     "link": 5
+    }
+   ],
+   "outputs": [
+    {
+     "name": "LAYER_1",
+     "type": "MASK",
+     "links": [
+      7,
+      10,
+      14,
+      18
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "LAYER_2",
+     "type": "MASK",
+     "links": [
+      20,
+      23,
+      27,
+      31
+     ],
+     "slot_index": 1
+    },
+    {
+     "name": "LAYER_3",
+     "type": "MASK",
+     "links": [
+      33,
+      36,
+      40,
+      44
+     ],
+     "slot_index": 2
+    },
+    {
+     "name": "LAYER_4",
+     "type": "MASK",
+     "links": [
+      46,
+      49,
+      53,
+      57
+     ],
+     "slot_index": 3
+    },
+    {
+     "name": "LAYER_5",
+     "type": "MASK",
+     "links": [
+      59,
+      62,
+      66,
+      70
+     ],
+     "slot_index": 4
+    },
+    {
+     "name": "LAYER_6",
+     "type": "MASK",
+     "links": [
+      72,
+      75,
+      79,
+      83
+     ],
+     "slot_index": 5
+    },
+    {
+     "name": "LAYER_7",
+     "type": "MASK",
+     "links": [
+      85,
+      88,
+      92,
+      96
+     ],
+     "slot_index": 6
+    },
+    {
+     "name": "LAYER_8",
+     "type": "MASK",
+     "links": [
+      98,
+      101,
+      105,
+      109
+     ],
+     "slot_index": 7
+    },
+    {
+     "name": "META_JSON",
+     "type": "STRING",
+     "links": [
+      11,
+      15,
+      24,
+      28,
+      37,
+      41,
+      50,
+      54,
+      63,
+      67,
+      76,
+      80,
+      89,
+      93,
+      102,
+      106
+     ],
+     "slot_index": 8
+    },
+    {
+     "name": "SUMMARY",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 9
+    }
+   ],
+   "title": "自動 z-order 分層（含共識投票）",
+   "properties": {
+    "Node name for S&R": "SAM3AutoLayerMasks"
+   },
+   "widgets_values": [
+    0.8,
+    0.85,
+    40,
+    0.98,
+    0.0,
+    6,
+    3,
+    2,
+    0.06
+   ]
+  },
+  {
+   "id": 6,
+   "type": "SAM3MaskReview",
+   "pos": [
+    960,
+    -400
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 5,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 6
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 7
+    }
+   ],
+   "outputs": [
+    {
+     "name": "NUMBERED_PREVIEW",
+     "type": "IMAGE",
+     "links": [
+      8
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "ASSET_MASKS",
+     "type": "MASK",
+     "links": [],
+     "slot_index": 1
+    },
+    {
+     "name": "FILL_MASKS",
+     "type": "MASK",
+     "links": [],
+     "slot_index": 2
+    },
+    {
+     "name": "SUMMARY",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 3
+    }
+   ],
+   "title": "01 葉節點 編號預覽",
+   "properties": {
+    "Node name for S&R": "SAM3MaskReview"
+   },
+   "widgets_values": [
+    "",
+    0,
+    0.32
+   ]
+  },
+  {
+   "id": 7,
+   "type": "SaveImage",
+   "pos": [
+    1400,
+    -400
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 6,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 8
+    }
+   ],
+   "outputs": [],
+   "title": "01 葉節點 預覽",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v6/layer1/preview"
+   ]
+  },
+  {
+   "id": 8,
+   "type": "SAM3CropToRGBA",
+   "pos": [
+    960,
+    -290
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 7,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 9
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 10
+    },
+    {
+     "name": "meta_json",
+     "type": "STRING",
+     "link": 11
+    }
+   ],
+   "outputs": [
+    {
+     "name": "RGBA_IMAGES",
+     "type": "IMAGE",
+     "links": [
+      12
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "COORDS_JSON",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 1
+    }
+   ],
+   "title": "01 葉節點 資產（乾淨容器）",
+   "properties": {
+    "Node name for S&R": "SAM3CropToRGBA"
+   },
+   "widgets_values": [
+    2,
+    1,
+    "sam3_auto_v6/layer1/asset",
+    1,
+    "difference",
+    0.1,
+    0.35,
+    true,
+    0.12
+   ]
+  },
+  {
+   "id": 9,
+   "type": "SaveImage",
+   "pos": [
+    1400,
+    -290
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 8,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 12
+    }
+   ],
+   "outputs": [],
+   "title": "✓ 01 葉節點 容器",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v6/layer1/asset"
+   ]
+  },
+  {
+   "id": 10,
+   "type": "SAM3CropToRGBA",
+   "pos": [
+    960,
+    -180
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 9,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 13
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 14
+    },
+    {
+     "name": "meta_json",
+     "type": "STRING",
+     "link": 15
+    }
+   ],
+   "outputs": [
+    {
+     "name": "RGBA_IMAGES",
+     "type": "IMAGE",
+     "links": [
+      16
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "COORDS_JSON",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 1
+    }
+   ],
+   "title": "01 葉節點 資產（原圖外觀）",
+   "properties": {
+    "Node name for S&R": "SAM3CropToRGBA"
+   },
+   "widgets_values": [
+    2,
+    1,
+    "sam3_auto_v6/layer1/flat",
+    1,
+    "difference",
+    0.1,
+    0.35,
+    true,
+    0.12
+   ]
+  },
+  {
+   "id": 11,
+   "type": "SaveImage",
+   "pos": [
+    1400,
+    -180
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 10,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 16
+    }
+   ],
+   "outputs": [],
+   "title": "✓ 01 葉節點 原樣",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v6/layer1/flat"
+   ]
+  },
+  {
+   "id": 12,
+   "type": "SAM3DeterministicInpaint",
+   "pos": [
+    960,
+    -70
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 11,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 17
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 18
+    }
+   ],
+   "outputs": [
+    {
+     "name": "INPAINTED_IMAGE",
+     "type": "IMAGE",
+     "links": [
+      19,
+      22,
+      30
+     ],
+     "slot_index": 0
+    }
+   ],
+   "title": "01 葉節點 確定性補洞",
+   "properties": {
+    "Node name for S&R": "SAM3DeterministicInpaint"
+   },
+   "widgets_values": [
+    "interp",
+    5,
+    20,
+    true,
+    5,
+    18,
+    13.0,
+    30.0,
+    0.6,
+    12.0,
+    0.3,
+    61
+   ]
+  },
+  {
+   "id": 13,
+   "type": "SAM3MaskReview",
+   "pos": [
+    960,
+    60
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 12,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 19
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 20
+    }
+   ],
+   "outputs": [
+    {
+     "name": "NUMBERED_PREVIEW",
+     "type": "IMAGE",
+     "links": [
+      21
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "ASSET_MASKS",
+     "type": "MASK",
+     "links": [],
+     "slot_index": 1
+    },
+    {
+     "name": "FILL_MASKS",
+     "type": "MASK",
+     "links": [],
+     "slot_index": 2
+    },
+    {
+     "name": "SUMMARY",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 3
+    }
+   ],
+   "title": "02 承載層 編號預覽",
+   "properties": {
+    "Node name for S&R": "SAM3MaskReview"
+   },
+   "widgets_values": [
+    "",
+    0,
+    0.32
+   ]
+  },
+  {
+   "id": 14,
+   "type": "SaveImage",
+   "pos": [
+    1400,
+    60
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 13,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 21
+    }
+   ],
+   "outputs": [],
+   "title": "02 承載層 預覽",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v6/layer2/preview"
+   ]
+  },
+  {
+   "id": 15,
+   "type": "SAM3CropToRGBA",
+   "pos": [
+    960,
+    170
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 14,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 22
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 23
+    },
+    {
+     "name": "meta_json",
+     "type": "STRING",
+     "link": 24
+    }
+   ],
+   "outputs": [
+    {
+     "name": "RGBA_IMAGES",
+     "type": "IMAGE",
+     "links": [
+      25
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "COORDS_JSON",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 1
+    }
+   ],
+   "title": "02 承載層 資產（乾淨容器）",
+   "properties": {
+    "Node name for S&R": "SAM3CropToRGBA"
+   },
+   "widgets_values": [
+    2,
+    1,
+    "sam3_auto_v6/layer2/asset",
+    2,
+    "difference",
+    0.1,
+    0.35,
+    true,
+    0.12
+   ]
+  },
+  {
+   "id": 16,
+   "type": "SaveImage",
+   "pos": [
+    1400,
+    170
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 15,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 25
+    }
+   ],
+   "outputs": [],
+   "title": "✓ 02 承載層 容器",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v6/layer2/asset"
+   ]
+  },
+  {
+   "id": 17,
+   "type": "SAM3CropToRGBA",
+   "pos": [
+    960,
+    280
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 16,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 26
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 27
+    },
+    {
+     "name": "meta_json",
+     "type": "STRING",
+     "link": 28
+    }
+   ],
+   "outputs": [
+    {
+     "name": "RGBA_IMAGES",
+     "type": "IMAGE",
+     "links": [
+      29
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "COORDS_JSON",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 1
+    }
+   ],
+   "title": "02 承載層 資產（原圖外觀）",
+   "properties": {
+    "Node name for S&R": "SAM3CropToRGBA"
+   },
+   "widgets_values": [
+    2,
+    1,
+    "sam3_auto_v6/layer2/flat",
+    2,
+    "difference",
+    0.1,
+    0.35,
+    true,
+    0.12
+   ]
+  },
+  {
+   "id": 18,
+   "type": "SaveImage",
+   "pos": [
+    1400,
+    280
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 17,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 29
+    }
+   ],
+   "outputs": [],
+   "title": "✓ 02 承載層 原樣",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v6/layer2/flat"
+   ]
+  },
+  {
+   "id": 19,
+   "type": "SAM3DeterministicInpaint",
+   "pos": [
+    960,
+    390
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 18,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 30
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 31
+    }
+   ],
+   "outputs": [
+    {
+     "name": "INPAINTED_IMAGE",
+     "type": "IMAGE",
+     "links": [
+      32,
+      35,
+      43
+     ],
+     "slot_index": 0
+    }
+   ],
+   "title": "02 承載層 確定性補洞",
+   "properties": {
+    "Node name for S&R": "SAM3DeterministicInpaint"
+   },
+   "widgets_values": [
+    "interp",
+    5,
+    20,
+    true,
+    5,
+    18,
+    13.0,
+    30.0,
+    0.6,
+    12.0,
+    0.3,
+    61
+   ]
+  },
+  {
+   "id": 20,
+   "type": "SAM3MaskReview",
+   "pos": [
+    960,
+    520
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 19,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 32
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 33
+    }
+   ],
+   "outputs": [
+    {
+     "name": "NUMBERED_PREVIEW",
+     "type": "IMAGE",
+     "links": [
+      34
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "ASSET_MASKS",
+     "type": "MASK",
+     "links": [],
+     "slot_index": 1
+    },
+    {
+     "name": "FILL_MASKS",
+     "type": "MASK",
+     "links": [],
+     "slot_index": 2
+    },
+    {
+     "name": "SUMMARY",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 3
+    }
+   ],
+   "title": "03 卡片層 編號預覽",
+   "properties": {
+    "Node name for S&R": "SAM3MaskReview"
+   },
+   "widgets_values": [
+    "",
+    0,
+    0.32
+   ]
+  },
+  {
+   "id": 21,
+   "type": "SaveImage",
+   "pos": [
+    1400,
+    520
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 20,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 34
+    }
+   ],
+   "outputs": [],
+   "title": "03 卡片層 預覽",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v6/layer3/preview"
+   ]
+  },
+  {
+   "id": 22,
+   "type": "SAM3CropToRGBA",
+   "pos": [
+    960,
+    630
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 21,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 35
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 36
+    },
+    {
+     "name": "meta_json",
+     "type": "STRING",
+     "link": 37
+    }
+   ],
+   "outputs": [
+    {
+     "name": "RGBA_IMAGES",
+     "type": "IMAGE",
+     "links": [
+      38
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "COORDS_JSON",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 1
+    }
+   ],
+   "title": "03 卡片層 資產（乾淨容器）",
+   "properties": {
+    "Node name for S&R": "SAM3CropToRGBA"
+   },
+   "widgets_values": [
+    2,
+    1,
+    "sam3_auto_v6/layer3/asset",
+    3,
+    "difference",
+    0.1,
+    0.35,
+    true,
+    0.12
+   ]
+  },
+  {
+   "id": 23,
+   "type": "SaveImage",
+   "pos": [
+    1400,
+    630
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 22,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 38
+    }
+   ],
+   "outputs": [],
+   "title": "✓ 03 卡片層 容器",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v6/layer3/asset"
+   ]
+  },
+  {
+   "id": 24,
+   "type": "SAM3CropToRGBA",
+   "pos": [
+    960,
+    740
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 23,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 39
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 40
+    },
+    {
+     "name": "meta_json",
+     "type": "STRING",
+     "link": 41
+    }
+   ],
+   "outputs": [
+    {
+     "name": "RGBA_IMAGES",
+     "type": "IMAGE",
+     "links": [
+      42
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "COORDS_JSON",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 1
+    }
+   ],
+   "title": "03 卡片層 資產（原圖外觀）",
+   "properties": {
+    "Node name for S&R": "SAM3CropToRGBA"
+   },
+   "widgets_values": [
+    2,
+    1,
+    "sam3_auto_v6/layer3/flat",
+    3,
+    "difference",
+    0.1,
+    0.35,
+    true,
+    0.12
+   ]
+  },
+  {
+   "id": 25,
+   "type": "SaveImage",
+   "pos": [
+    1400,
+    740
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 24,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 42
+    }
+   ],
+   "outputs": [],
+   "title": "✓ 03 卡片層 原樣",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v6/layer3/flat"
+   ]
+  },
+  {
+   "id": 26,
+   "type": "SAM3DeterministicInpaint",
+   "pos": [
+    960,
+    850
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 25,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 43
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 44
+    }
+   ],
+   "outputs": [
+    {
+     "name": "INPAINTED_IMAGE",
+     "type": "IMAGE",
+     "links": [
+      45,
+      48,
+      56
+     ],
+     "slot_index": 0
+    }
+   ],
+   "title": "03 卡片層 確定性補洞",
+   "properties": {
+    "Node name for S&R": "SAM3DeterministicInpaint"
+   },
+   "widgets_values": [
+    "interp",
+    5,
+    20,
+    true,
+    5,
+    18,
+    13.0,
+    30.0,
+    0.6,
+    12.0,
+    0.3,
+    61
+   ]
+  },
+  {
+   "id": 27,
+   "type": "SAM3MaskReview",
+   "pos": [
+    960,
+    980
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 26,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 45
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 46
+    }
+   ],
+   "outputs": [
+    {
+     "name": "NUMBERED_PREVIEW",
+     "type": "IMAGE",
+     "links": [
+      47
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "ASSET_MASKS",
+     "type": "MASK",
+     "links": [],
+     "slot_index": 1
+    },
+    {
+     "name": "FILL_MASKS",
+     "type": "MASK",
+     "links": [],
+     "slot_index": 2
+    },
+    {
+     "name": "SUMMARY",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 3
+    }
+   ],
+   "title": "04 面板層 編號預覽",
+   "properties": {
+    "Node name for S&R": "SAM3MaskReview"
+   },
+   "widgets_values": [
+    "",
+    0,
+    0.32
+   ]
+  },
+  {
+   "id": 28,
+   "type": "SaveImage",
+   "pos": [
+    1400,
+    980
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 27,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 47
+    }
+   ],
+   "outputs": [],
+   "title": "04 面板層 預覽",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v6/layer4/preview"
+   ]
+  },
+  {
+   "id": 29,
+   "type": "SAM3CropToRGBA",
+   "pos": [
+    960,
+    1090
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 28,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 48
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 49
+    },
+    {
+     "name": "meta_json",
+     "type": "STRING",
+     "link": 50
+    }
+   ],
+   "outputs": [
+    {
+     "name": "RGBA_IMAGES",
+     "type": "IMAGE",
+     "links": [
+      51
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "COORDS_JSON",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 1
+    }
+   ],
+   "title": "04 面板層 資產（乾淨容器）",
+   "properties": {
+    "Node name for S&R": "SAM3CropToRGBA"
+   },
+   "widgets_values": [
+    2,
+    1,
+    "sam3_auto_v6/layer4/asset",
+    4,
+    "difference",
+    0.1,
+    0.35,
+    true,
+    0.12
+   ]
+  },
+  {
+   "id": 30,
+   "type": "SaveImage",
+   "pos": [
+    1400,
+    1090
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 29,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 51
+    }
+   ],
+   "outputs": [],
+   "title": "✓ 04 面板層 容器",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v6/layer4/asset"
+   ]
+  },
+  {
+   "id": 31,
+   "type": "SAM3CropToRGBA",
+   "pos": [
+    960,
+    1200
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 30,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 52
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 53
+    },
+    {
+     "name": "meta_json",
+     "type": "STRING",
+     "link": 54
+    }
+   ],
+   "outputs": [
+    {
+     "name": "RGBA_IMAGES",
+     "type": "IMAGE",
+     "links": [
+      55
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "COORDS_JSON",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 1
+    }
+   ],
+   "title": "04 面板層 資產（原圖外觀）",
+   "properties": {
+    "Node name for S&R": "SAM3CropToRGBA"
+   },
+   "widgets_values": [
+    2,
+    1,
+    "sam3_auto_v6/layer4/flat",
+    4,
+    "difference",
+    0.1,
+    0.35,
+    true,
+    0.12
+   ]
+  },
+  {
+   "id": 32,
+   "type": "SaveImage",
+   "pos": [
+    1400,
+    1200
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 31,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 55
+    }
+   ],
+   "outputs": [],
+   "title": "✓ 04 面板層 原樣",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v6/layer4/flat"
+   ]
+  },
+  {
+   "id": 33,
+   "type": "SAM3DeterministicInpaint",
+   "pos": [
+    960,
+    1310
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 32,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 56
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 57
+    }
+   ],
+   "outputs": [
+    {
+     "name": "INPAINTED_IMAGE",
+     "type": "IMAGE",
+     "links": [
+      58,
+      61,
+      69
+     ],
+     "slot_index": 0
+    }
+   ],
+   "title": "04 面板層 確定性補洞",
+   "properties": {
+    "Node name for S&R": "SAM3DeterministicInpaint"
+   },
+   "widgets_values": [
+    "interp",
+    5,
+    20,
+    true,
+    5,
+    18,
+    13.0,
+    30.0,
+    0.6,
+    12.0,
+    0.3,
+    61
+   ]
+  },
+  {
+   "id": 34,
+   "type": "SAM3MaskReview",
+   "pos": [
+    960,
+    1440
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 33,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 58
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 59
+    }
+   ],
+   "outputs": [
+    {
+     "name": "NUMBERED_PREVIEW",
+     "type": "IMAGE",
+     "links": [
+      60
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "ASSET_MASKS",
+     "type": "MASK",
+     "links": [],
+     "slot_index": 1
+    },
+    {
+     "name": "FILL_MASKS",
+     "type": "MASK",
+     "links": [],
+     "slot_index": 2
+    },
+    {
+     "name": "SUMMARY",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 3
+    }
+   ],
+   "title": "05 外框層 編號預覽",
+   "properties": {
+    "Node name for S&R": "SAM3MaskReview"
+   },
+   "widgets_values": [
+    "",
+    0,
+    0.32
+   ]
+  },
+  {
+   "id": 35,
+   "type": "SaveImage",
+   "pos": [
+    1400,
+    1440
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 34,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 60
+    }
+   ],
+   "outputs": [],
+   "title": "05 外框層 預覽",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v6/layer5/preview"
+   ]
+  },
+  {
+   "id": 36,
+   "type": "SAM3CropToRGBA",
+   "pos": [
+    960,
+    1550
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 35,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 61
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 62
+    },
+    {
+     "name": "meta_json",
+     "type": "STRING",
+     "link": 63
+    }
+   ],
+   "outputs": [
+    {
+     "name": "RGBA_IMAGES",
+     "type": "IMAGE",
+     "links": [
+      64
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "COORDS_JSON",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 1
+    }
+   ],
+   "title": "05 外框層 資產（乾淨容器）",
+   "properties": {
+    "Node name for S&R": "SAM3CropToRGBA"
+   },
+   "widgets_values": [
+    2,
+    1,
+    "sam3_auto_v6/layer5/asset",
+    5,
+    "difference",
+    0.1,
+    0.35,
+    true,
+    0.12
+   ]
+  },
+  {
+   "id": 37,
+   "type": "SaveImage",
+   "pos": [
+    1400,
+    1550
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 36,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 64
+    }
+   ],
+   "outputs": [],
+   "title": "✓ 05 外框層 容器",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v6/layer5/asset"
+   ]
+  },
+  {
+   "id": 38,
+   "type": "SAM3CropToRGBA",
+   "pos": [
+    960,
+    1660
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 37,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 65
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 66
+    },
+    {
+     "name": "meta_json",
+     "type": "STRING",
+     "link": 67
+    }
+   ],
+   "outputs": [
+    {
+     "name": "RGBA_IMAGES",
+     "type": "IMAGE",
+     "links": [
+      68
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "COORDS_JSON",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 1
+    }
+   ],
+   "title": "05 外框層 資產（原圖外觀）",
+   "properties": {
+    "Node name for S&R": "SAM3CropToRGBA"
+   },
+   "widgets_values": [
+    2,
+    1,
+    "sam3_auto_v6/layer5/flat",
+    5,
+    "difference",
+    0.1,
+    0.35,
+    true,
+    0.12
+   ]
+  },
+  {
+   "id": 39,
+   "type": "SaveImage",
+   "pos": [
+    1400,
+    1660
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 38,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 68
+    }
+   ],
+   "outputs": [],
+   "title": "✓ 05 外框層 原樣",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v6/layer5/flat"
+   ]
+  },
+  {
+   "id": 40,
+   "type": "SAM3DeterministicInpaint",
+   "pos": [
+    960,
+    1770
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 39,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 69
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 70
+    }
+   ],
+   "outputs": [
+    {
+     "name": "INPAINTED_IMAGE",
+     "type": "IMAGE",
+     "links": [
+      71,
+      74,
+      82
+     ],
+     "slot_index": 0
+    }
+   ],
+   "title": "05 外框層 確定性補洞",
+   "properties": {
+    "Node name for S&R": "SAM3DeterministicInpaint"
+   },
+   "widgets_values": [
+    "interp",
+    5,
+    20,
+    true,
+    5,
+    18,
+    13.0,
+    30.0,
+    0.6,
+    12.0,
+    0.3,
+    61
+   ]
+  },
+  {
+   "id": 41,
+   "type": "SAM3MaskReview",
+   "pos": [
+    960,
+    1900
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 40,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 71
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 72
+    }
+   ],
+   "outputs": [
+    {
+     "name": "NUMBERED_PREVIEW",
+     "type": "IMAGE",
+     "links": [
+      73
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "ASSET_MASKS",
+     "type": "MASK",
+     "links": [],
+     "slot_index": 1
+    },
+    {
+     "name": "FILL_MASKS",
+     "type": "MASK",
+     "links": [],
+     "slot_index": 2
+    },
+    {
+     "name": "SUMMARY",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 3
+    }
+   ],
+   "title": "06 背景層 編號預覽",
+   "properties": {
+    "Node name for S&R": "SAM3MaskReview"
+   },
+   "widgets_values": [
+    "",
+    0,
+    0.32
+   ]
+  },
+  {
+   "id": 42,
+   "type": "SaveImage",
+   "pos": [
+    1400,
+    1900
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 41,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 73
+    }
+   ],
+   "outputs": [],
+   "title": "06 背景層 預覽",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v6/layer6/preview"
+   ]
+  },
+  {
+   "id": 43,
+   "type": "SAM3CropToRGBA",
+   "pos": [
+    960,
+    2010
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 42,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 74
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 75
+    },
+    {
+     "name": "meta_json",
+     "type": "STRING",
+     "link": 76
+    }
+   ],
+   "outputs": [
+    {
+     "name": "RGBA_IMAGES",
+     "type": "IMAGE",
+     "links": [
+      77
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "COORDS_JSON",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 1
+    }
+   ],
+   "title": "06 背景層 資產（乾淨容器）",
+   "properties": {
+    "Node name for S&R": "SAM3CropToRGBA"
+   },
+   "widgets_values": [
+    2,
+    1,
+    "sam3_auto_v6/layer6/asset",
+    6,
+    "difference",
+    0.1,
+    0.35,
+    true,
+    0.12
+   ]
+  },
+  {
+   "id": 44,
+   "type": "SaveImage",
+   "pos": [
+    1400,
+    2010
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 43,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 77
+    }
+   ],
+   "outputs": [],
+   "title": "✓ 06 背景層 容器",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v6/layer6/asset"
+   ]
+  },
+  {
+   "id": 45,
+   "type": "SAM3CropToRGBA",
+   "pos": [
+    960,
+    2120
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 44,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 78
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 79
+    },
+    {
+     "name": "meta_json",
+     "type": "STRING",
+     "link": 80
+    }
+   ],
+   "outputs": [
+    {
+     "name": "RGBA_IMAGES",
+     "type": "IMAGE",
+     "links": [
+      81
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "COORDS_JSON",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 1
+    }
+   ],
+   "title": "06 背景層 資產（原圖外觀）",
+   "properties": {
+    "Node name for S&R": "SAM3CropToRGBA"
+   },
+   "widgets_values": [
+    2,
+    1,
+    "sam3_auto_v6/layer6/flat",
+    6,
+    "difference",
+    0.1,
+    0.35,
+    true,
+    0.12
+   ]
+  },
+  {
+   "id": 46,
+   "type": "SaveImage",
+   "pos": [
+    1400,
+    2120
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 45,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 81
+    }
+   ],
+   "outputs": [],
+   "title": "✓ 06 背景層 原樣",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v6/layer6/flat"
+   ]
+  },
+  {
+   "id": 47,
+   "type": "SAM3DeterministicInpaint",
+   "pos": [
+    960,
+    2230
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 46,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 82
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 83
+    }
+   ],
+   "outputs": [
+    {
+     "name": "INPAINTED_IMAGE",
+     "type": "IMAGE",
+     "links": [
+      84,
+      87,
+      95
+     ],
+     "slot_index": 0
+    }
+   ],
+   "title": "06 背景層 確定性補洞",
+   "properties": {
+    "Node name for S&R": "SAM3DeterministicInpaint"
+   },
+   "widgets_values": [
+    "interp",
+    5,
+    20,
+    true,
+    5,
+    18,
+    13.0,
+    30.0,
+    0.6,
+    12.0,
+    0.3,
+    61
+   ]
+  },
+  {
+   "id": 48,
+   "type": "SAM3MaskReview",
+   "pos": [
+    960,
+    2360
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 47,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 84
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 85
+    }
+   ],
+   "outputs": [
+    {
+     "name": "NUMBERED_PREVIEW",
+     "type": "IMAGE",
+     "links": [
+      86
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "ASSET_MASKS",
+     "type": "MASK",
+     "links": [],
+     "slot_index": 1
+    },
+    {
+     "name": "FILL_MASKS",
+     "type": "MASK",
+     "links": [],
+     "slot_index": 2
+    },
+    {
+     "name": "SUMMARY",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 3
+    }
+   ],
+   "title": "07 深層 A 編號預覽",
+   "properties": {
+    "Node name for S&R": "SAM3MaskReview"
+   },
+   "widgets_values": [
+    "",
+    0,
+    0.32
+   ]
+  },
+  {
+   "id": 49,
+   "type": "SaveImage",
+   "pos": [
+    1400,
+    2360
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 48,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 86
+    }
+   ],
+   "outputs": [],
+   "title": "07 深層 A 預覽",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v6/layer7/preview"
+   ]
+  },
+  {
+   "id": 50,
+   "type": "SAM3CropToRGBA",
+   "pos": [
+    960,
+    2470
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 49,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 87
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 88
+    },
+    {
+     "name": "meta_json",
+     "type": "STRING",
+     "link": 89
+    }
+   ],
+   "outputs": [
+    {
+     "name": "RGBA_IMAGES",
+     "type": "IMAGE",
+     "links": [
+      90
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "COORDS_JSON",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 1
+    }
+   ],
+   "title": "07 深層 A 資產（乾淨容器）",
+   "properties": {
+    "Node name for S&R": "SAM3CropToRGBA"
+   },
+   "widgets_values": [
+    2,
+    1,
+    "sam3_auto_v6/layer7/asset",
+    7,
+    "difference",
+    0.1,
+    0.35,
+    true,
+    0.12
+   ]
+  },
+  {
+   "id": 51,
+   "type": "SaveImage",
+   "pos": [
+    1400,
+    2470
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 50,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 90
+    }
+   ],
+   "outputs": [],
+   "title": "✓ 07 深層 A 容器",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v6/layer7/asset"
+   ]
+  },
+  {
+   "id": 52,
+   "type": "SAM3CropToRGBA",
+   "pos": [
+    960,
+    2580
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 51,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 91
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 92
+    },
+    {
+     "name": "meta_json",
+     "type": "STRING",
+     "link": 93
+    }
+   ],
+   "outputs": [
+    {
+     "name": "RGBA_IMAGES",
+     "type": "IMAGE",
+     "links": [
+      94
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "COORDS_JSON",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 1
+    }
+   ],
+   "title": "07 深層 A 資產（原圖外觀）",
+   "properties": {
+    "Node name for S&R": "SAM3CropToRGBA"
+   },
+   "widgets_values": [
+    2,
+    1,
+    "sam3_auto_v6/layer7/flat",
+    7,
+    "difference",
+    0.1,
+    0.35,
+    true,
+    0.12
+   ]
+  },
+  {
+   "id": 53,
+   "type": "SaveImage",
+   "pos": [
+    1400,
+    2580
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 52,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 94
+    }
+   ],
+   "outputs": [],
+   "title": "✓ 07 深層 A 原樣",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v6/layer7/flat"
+   ]
+  },
+  {
+   "id": 54,
+   "type": "SAM3DeterministicInpaint",
+   "pos": [
+    960,
+    2690
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 53,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 95
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 96
+    }
+   ],
+   "outputs": [
+    {
+     "name": "INPAINTED_IMAGE",
+     "type": "IMAGE",
+     "links": [
+      97,
+      100,
+      108
+     ],
+     "slot_index": 0
+    }
+   ],
+   "title": "07 深層 A 確定性補洞",
+   "properties": {
+    "Node name for S&R": "SAM3DeterministicInpaint"
+   },
+   "widgets_values": [
+    "interp",
+    5,
+    20,
+    true,
+    5,
+    18,
+    13.0,
+    30.0,
+    0.6,
+    12.0,
+    0.3,
+    61
+   ]
+  },
+  {
+   "id": 55,
+   "type": "SAM3MaskReview",
+   "pos": [
+    960,
+    2820
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 54,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 97
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 98
+    }
+   ],
+   "outputs": [
+    {
+     "name": "NUMBERED_PREVIEW",
+     "type": "IMAGE",
+     "links": [
+      99
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "ASSET_MASKS",
+     "type": "MASK",
+     "links": [],
+     "slot_index": 1
+    },
+    {
+     "name": "FILL_MASKS",
+     "type": "MASK",
+     "links": [],
+     "slot_index": 2
+    },
+    {
+     "name": "SUMMARY",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 3
+    }
+   ],
+   "title": "08 深層 B 編號預覽",
+   "properties": {
+    "Node name for S&R": "SAM3MaskReview"
+   },
+   "widgets_values": [
+    "",
+    0,
+    0.32
+   ]
+  },
+  {
+   "id": 56,
+   "type": "SaveImage",
+   "pos": [
+    1400,
+    2820
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 55,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 99
+    }
+   ],
+   "outputs": [],
+   "title": "08 深層 B 預覽",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v6/layer8/preview"
+   ]
+  },
+  {
+   "id": 57,
+   "type": "SAM3CropToRGBA",
+   "pos": [
+    960,
+    2930
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 56,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 100
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 101
+    },
+    {
+     "name": "meta_json",
+     "type": "STRING",
+     "link": 102
+    }
+   ],
+   "outputs": [
+    {
+     "name": "RGBA_IMAGES",
+     "type": "IMAGE",
+     "links": [
+      103
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "COORDS_JSON",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 1
+    }
+   ],
+   "title": "08 深層 B 資產（乾淨容器）",
+   "properties": {
+    "Node name for S&R": "SAM3CropToRGBA"
+   },
+   "widgets_values": [
+    2,
+    1,
+    "sam3_auto_v6/layer8/asset",
+    8,
+    "difference",
+    0.1,
+    0.35,
+    true,
+    0.12
+   ]
+  },
+  {
+   "id": 58,
+   "type": "SaveImage",
+   "pos": [
+    1400,
+    2930
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 57,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 103
+    }
+   ],
+   "outputs": [],
+   "title": "✓ 08 深層 B 容器",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v6/layer8/asset"
+   ]
+  },
+  {
+   "id": 59,
+   "type": "SAM3CropToRGBA",
+   "pos": [
+    960,
+    3040
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 58,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 104
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 105
+    },
+    {
+     "name": "meta_json",
+     "type": "STRING",
+     "link": 106
+    }
+   ],
+   "outputs": [
+    {
+     "name": "RGBA_IMAGES",
+     "type": "IMAGE",
+     "links": [
+      107
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "COORDS_JSON",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 1
+    }
+   ],
+   "title": "08 深層 B 資產（原圖外觀）",
+   "properties": {
+    "Node name for S&R": "SAM3CropToRGBA"
+   },
+   "widgets_values": [
+    2,
+    1,
+    "sam3_auto_v6/layer8/flat",
+    8,
+    "difference",
+    0.1,
+    0.35,
+    true,
+    0.12
+   ]
+  },
+  {
+   "id": 60,
+   "type": "SaveImage",
+   "pos": [
+    1400,
+    3040
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 59,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 107
+    }
+   ],
+   "outputs": [],
+   "title": "✓ 08 深層 B 原樣",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v6/layer8/flat"
+   ]
+  },
+  {
+   "id": 61,
+   "type": "SAM3DeterministicInpaint",
+   "pos": [
+    960,
+    3150
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 60,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 108
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 109
+    }
+   ],
+   "outputs": [
+    {
+     "name": "INPAINTED_IMAGE",
+     "type": "IMAGE",
+     "links": [
+      110
+     ],
+     "slot_index": 0
+    }
+   ],
+   "title": "08 深層 B 確定性補洞",
+   "properties": {
+    "Node name for S&R": "SAM3DeterministicInpaint"
+   },
+   "widgets_values": [
+    "interp",
+    5,
+    20,
+    true,
+    5,
+    18,
+    13.0,
+    30.0,
+    0.6,
+    12.0,
+    0.3,
+    61
+   ]
+  },
+  {
+   "id": 62,
+   "type": "SaveImage",
+   "pos": [
+    1400,
+    3280
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 61,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 110
+    }
+   ],
+   "outputs": [],
+   "title": "✓ 乾淨背景",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v6/background/final"
+   ]
+  }
+ ],
+ "links": [
+  [
+   1,
+   3,
+   0,
+   4,
+   0,
+   "MODEL"
+  ],
+  [
+   2,
+   3,
+   1,
+   4,
+   1,
+   "CLIP"
+  ],
+  [
+   3,
+   2,
+   0,
+   4,
+   2,
+   "IMAGE"
+  ],
+  [
+   4,
+   4,
+   0,
+   5,
+   0,
+   "MASK"
+  ],
+  [
+   5,
+   4,
+   1,
+   5,
+   1,
+   "STRING"
+  ],
+  [
+   6,
+   2,
+   0,
+   6,
+   0,
+   "IMAGE"
+  ],
+  [
+   7,
+   5,
+   0,
+   6,
+   1,
+   "MASK"
+  ],
+  [
+   8,
+   6,
+   0,
+   7,
+   0,
+   "IMAGE"
+  ],
+  [
+   9,
+   2,
+   0,
+   8,
+   0,
+   "IMAGE"
+  ],
+  [
+   10,
+   5,
+   0,
+   8,
+   1,
+   "MASK"
+  ],
+  [
+   11,
+   5,
+   8,
+   8,
+   2,
+   "STRING"
+  ],
+  [
+   12,
+   8,
+   0,
+   9,
+   0,
+   "IMAGE"
+  ],
+  [
+   13,
+   2,
+   0,
+   10,
+   0,
+   "IMAGE"
+  ],
+  [
+   14,
+   5,
+   0,
+   10,
+   1,
+   "MASK"
+  ],
+  [
+   15,
+   5,
+   8,
+   10,
+   2,
+   "STRING"
+  ],
+  [
+   16,
+   10,
+   0,
+   11,
+   0,
+   "IMAGE"
+  ],
+  [
+   17,
+   2,
+   0,
+   12,
+   0,
+   "IMAGE"
+  ],
+  [
+   18,
+   5,
+   0,
+   12,
+   1,
+   "MASK"
+  ],
+  [
+   19,
+   12,
+   0,
+   13,
+   0,
+   "IMAGE"
+  ],
+  [
+   20,
+   5,
+   1,
+   13,
+   1,
+   "MASK"
+  ],
+  [
+   21,
+   13,
+   0,
+   14,
+   0,
+   "IMAGE"
+  ],
+  [
+   22,
+   12,
+   0,
+   15,
+   0,
+   "IMAGE"
+  ],
+  [
+   23,
+   5,
+   1,
+   15,
+   1,
+   "MASK"
+  ],
+  [
+   24,
+   5,
+   8,
+   15,
+   2,
+   "STRING"
+  ],
+  [
+   25,
+   15,
+   0,
+   16,
+   0,
+   "IMAGE"
+  ],
+  [
+   26,
+   2,
+   0,
+   17,
+   0,
+   "IMAGE"
+  ],
+  [
+   27,
+   5,
+   1,
+   17,
+   1,
+   "MASK"
+  ],
+  [
+   28,
+   5,
+   8,
+   17,
+   2,
+   "STRING"
+  ],
+  [
+   29,
+   17,
+   0,
+   18,
+   0,
+   "IMAGE"
+  ],
+  [
+   30,
+   12,
+   0,
+   19,
+   0,
+   "IMAGE"
+  ],
+  [
+   31,
+   5,
+   1,
+   19,
+   1,
+   "MASK"
+  ],
+  [
+   32,
+   19,
+   0,
+   20,
+   0,
+   "IMAGE"
+  ],
+  [
+   33,
+   5,
+   2,
+   20,
+   1,
+   "MASK"
+  ],
+  [
+   34,
+   20,
+   0,
+   21,
+   0,
+   "IMAGE"
+  ],
+  [
+   35,
+   19,
+   0,
+   22,
+   0,
+   "IMAGE"
+  ],
+  [
+   36,
+   5,
+   2,
+   22,
+   1,
+   "MASK"
+  ],
+  [
+   37,
+   5,
+   8,
+   22,
+   2,
+   "STRING"
+  ],
+  [
+   38,
+   22,
+   0,
+   23,
+   0,
+   "IMAGE"
+  ],
+  [
+   39,
+   2,
+   0,
+   24,
+   0,
+   "IMAGE"
+  ],
+  [
+   40,
+   5,
+   2,
+   24,
+   1,
+   "MASK"
+  ],
+  [
+   41,
+   5,
+   8,
+   24,
+   2,
+   "STRING"
+  ],
+  [
+   42,
+   24,
+   0,
+   25,
+   0,
+   "IMAGE"
+  ],
+  [
+   43,
+   19,
+   0,
+   26,
+   0,
+   "IMAGE"
+  ],
+  [
+   44,
+   5,
+   2,
+   26,
+   1,
+   "MASK"
+  ],
+  [
+   45,
+   26,
+   0,
+   27,
+   0,
+   "IMAGE"
+  ],
+  [
+   46,
+   5,
+   3,
+   27,
+   1,
+   "MASK"
+  ],
+  [
+   47,
+   27,
+   0,
+   28,
+   0,
+   "IMAGE"
+  ],
+  [
+   48,
+   26,
+   0,
+   29,
+   0,
+   "IMAGE"
+  ],
+  [
+   49,
+   5,
+   3,
+   29,
+   1,
+   "MASK"
+  ],
+  [
+   50,
+   5,
+   8,
+   29,
+   2,
+   "STRING"
+  ],
+  [
+   51,
+   29,
+   0,
+   30,
+   0,
+   "IMAGE"
+  ],
+  [
+   52,
+   2,
+   0,
+   31,
+   0,
+   "IMAGE"
+  ],
+  [
+   53,
+   5,
+   3,
+   31,
+   1,
+   "MASK"
+  ],
+  [
+   54,
+   5,
+   8,
+   31,
+   2,
+   "STRING"
+  ],
+  [
+   55,
+   31,
+   0,
+   32,
+   0,
+   "IMAGE"
+  ],
+  [
+   56,
+   26,
+   0,
+   33,
+   0,
+   "IMAGE"
+  ],
+  [
+   57,
+   5,
+   3,
+   33,
+   1,
+   "MASK"
+  ],
+  [
+   58,
+   33,
+   0,
+   34,
+   0,
+   "IMAGE"
+  ],
+  [
+   59,
+   5,
+   4,
+   34,
+   1,
+   "MASK"
+  ],
+  [
+   60,
+   34,
+   0,
+   35,
+   0,
+   "IMAGE"
+  ],
+  [
+   61,
+   33,
+   0,
+   36,
+   0,
+   "IMAGE"
+  ],
+  [
+   62,
+   5,
+   4,
+   36,
+   1,
+   "MASK"
+  ],
+  [
+   63,
+   5,
+   8,
+   36,
+   2,
+   "STRING"
+  ],
+  [
+   64,
+   36,
+   0,
+   37,
+   0,
+   "IMAGE"
+  ],
+  [
+   65,
+   2,
+   0,
+   38,
+   0,
+   "IMAGE"
+  ],
+  [
+   66,
+   5,
+   4,
+   38,
+   1,
+   "MASK"
+  ],
+  [
+   67,
+   5,
+   8,
+   38,
+   2,
+   "STRING"
+  ],
+  [
+   68,
+   38,
+   0,
+   39,
+   0,
+   "IMAGE"
+  ],
+  [
+   69,
+   33,
+   0,
+   40,
+   0,
+   "IMAGE"
+  ],
+  [
+   70,
+   5,
+   4,
+   40,
+   1,
+   "MASK"
+  ],
+  [
+   71,
+   40,
+   0,
+   41,
+   0,
+   "IMAGE"
+  ],
+  [
+   72,
+   5,
+   5,
+   41,
+   1,
+   "MASK"
+  ],
+  [
+   73,
+   41,
+   0,
+   42,
+   0,
+   "IMAGE"
+  ],
+  [
+   74,
+   40,
+   0,
+   43,
+   0,
+   "IMAGE"
+  ],
+  [
+   75,
+   5,
+   5,
+   43,
+   1,
+   "MASK"
+  ],
+  [
+   76,
+   5,
+   8,
+   43,
+   2,
+   "STRING"
+  ],
+  [
+   77,
+   43,
+   0,
+   44,
+   0,
+   "IMAGE"
+  ],
+  [
+   78,
+   2,
+   0,
+   45,
+   0,
+   "IMAGE"
+  ],
+  [
+   79,
+   5,
+   5,
+   45,
+   1,
+   "MASK"
+  ],
+  [
+   80,
+   5,
+   8,
+   45,
+   2,
+   "STRING"
+  ],
+  [
+   81,
+   45,
+   0,
+   46,
+   0,
+   "IMAGE"
+  ],
+  [
+   82,
+   40,
+   0,
+   47,
+   0,
+   "IMAGE"
+  ],
+  [
+   83,
+   5,
+   5,
+   47,
+   1,
+   "MASK"
+  ],
+  [
+   84,
+   47,
+   0,
+   48,
+   0,
+   "IMAGE"
+  ],
+  [
+   85,
+   5,
+   6,
+   48,
+   1,
+   "MASK"
+  ],
+  [
+   86,
+   48,
+   0,
+   49,
+   0,
+   "IMAGE"
+  ],
+  [
+   87,
+   47,
+   0,
+   50,
+   0,
+   "IMAGE"
+  ],
+  [
+   88,
+   5,
+   6,
+   50,
+   1,
+   "MASK"
+  ],
+  [
+   89,
+   5,
+   8,
+   50,
+   2,
+   "STRING"
+  ],
+  [
+   90,
+   50,
+   0,
+   51,
+   0,
+   "IMAGE"
+  ],
+  [
+   91,
+   2,
+   0,
+   52,
+   0,
+   "IMAGE"
+  ],
+  [
+   92,
+   5,
+   6,
+   52,
+   1,
+   "MASK"
+  ],
+  [
+   93,
+   5,
+   8,
+   52,
+   2,
+   "STRING"
+  ],
+  [
+   94,
+   52,
+   0,
+   53,
+   0,
+   "IMAGE"
+  ],
+  [
+   95,
+   47,
+   0,
+   54,
+   0,
+   "IMAGE"
+  ],
+  [
+   96,
+   5,
+   6,
+   54,
+   1,
+   "MASK"
+  ],
+  [
+   97,
+   54,
+   0,
+   55,
+   0,
+   "IMAGE"
+  ],
+  [
+   98,
+   5,
+   7,
+   55,
+   1,
+   "MASK"
+  ],
+  [
+   99,
+   55,
+   0,
+   56,
+   0,
+   "IMAGE"
+  ],
+  [
+   100,
+   54,
+   0,
+   57,
+   0,
+   "IMAGE"
+  ],
+  [
+   101,
+   5,
+   7,
+   57,
+   1,
+   "MASK"
+  ],
+  [
+   102,
+   5,
+   8,
+   57,
+   2,
+   "STRING"
+  ],
+  [
+   103,
+   57,
+   0,
+   58,
+   0,
+   "IMAGE"
+  ],
+  [
+   104,
+   2,
+   0,
+   59,
+   0,
+   "IMAGE"
+  ],
+  [
+   105,
+   5,
+   7,
+   59,
+   1,
+   "MASK"
+  ],
+  [
+   106,
+   5,
+   8,
+   59,
+   2,
+   "STRING"
+  ],
+  [
+   107,
+   59,
+   0,
+   60,
+   0,
+   "IMAGE"
+  ],
+  [
+   108,
+   54,
+   0,
+   61,
+   0,
+   "IMAGE"
+  ],
+  [
+   109,
+   5,
+   7,
+   61,
+   1,
+   "MASK"
+  ],
+  [
+   110,
+   61,
+   0,
+   62,
+   0,
+   "IMAGE"
+  ]
+ ],
+ "groups": [],
+ "config": {},
+ "extra": {},
+ "version": 0.4
+}

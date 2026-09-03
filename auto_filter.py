@@ -646,8 +646,8 @@ def auto_layers(masks, labels=None, dedupe_iou=0.85, contain_ratio=0.85, min_are
 
 # --------------------------------------------------------------------------- alpha refinement
 
-def difference_matte(image, mask, low=0.10, high=0.35, min_coverage=0.15, pad=6,
-                     smooth=1, keep_largest=True):
+def difference_matte(image, mask, low=0.10, high=0.35, min_coverage=0.40, pad=6,
+                     smooth=1, keep_largest=True, max_interior_hole=0.25, tight_edge=0.9):
     """Turn a blob-shaped mask into a shape-accurate alpha using a difference matte.
 
     SAM3 returns text as a filled rectangle, so a "text" sprite comes out with its plate baked
@@ -665,6 +665,21 @@ def difference_matte(image, mask, low=0.10, high=0.35, min_coverage=0.15, pad=6,
     box = bbox(mask)
     if box is None:
         return mask.astype(np.float32)
+
+    # If SAM3 already traced this shape onto a real image edge, the mask is not a loose plate and
+    # re-cutting it can only hurt: a stud whose middle matches the brick it sits on would be
+    # hollowed into a ring. Only masks whose border runs over flat colour get re-matted.
+    if tight_edge > 0:
+        grey = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY).astype(np.float32)
+        edges = cv2.magnitude(cv2.Sobel(grey, cv2.CV_32F, 1, 0, ksize=3),
+                              cv2.Sobel(grey, cv2.CV_32F, 0, 1, ksize=3))
+        u = mask.astype(np.uint8)
+        rim = (cv2.dilate(u, np.ones((3, 3), np.uint8))
+               - cv2.erode(u, np.ones((3, 3), np.uint8))) > 0
+        if rim.sum() >= 8:
+            if float(np.percentile(edges[rim], 60)) / 255.0 > tight_edge:
+                return mask.astype(np.float32)
+
     h_img, w_img = mask.shape
     x1 = max(0, box[0] - pad)
     y1 = max(0, box[1] - pad)
@@ -696,6 +711,21 @@ def difference_matte(image, mask, low=0.10, high=0.35, min_coverage=0.15, pad=6,
     coverage = float((alpha > 0.5).sum()) / max(1, int(sm.sum()))
     if coverage < min_coverage:
         return mask.astype(np.float32)
+
+    # A difference matte hollows out anything whose middle matches what surrounds it - a brick
+    # stud sitting on the brick becomes a ring. Tell that apart from a glyph counter by whether
+    # the removed area is sealed inside the shape: a stud's middle is, the gaps between strokes
+    # of a word are not, because they run out to the sprite edge.
+    if max_interior_hole > 0:
+        opaque = alpha > 0.5
+        free = (~opaque).astype(np.uint8)          # everything the matte would let through
+        n_f, lab_f = cv2.connectedComponents(np.pad(free, 1, constant_values=1), connectivity=4)
+        outside_label = lab_f[0, 0]                # the padding ring is one connected region
+        inner = lab_f[1:-1, 1:-1]
+        # a transparent pixel that cannot reach the outside is walled in by the element itself
+        sealed = free.astype(bool) & (inner != outside_label) & sm
+        if sealed.sum() > max_interior_hole * max(1, int(sm.sum())):
+            return mask.astype(np.float32)
 
     if smooth > 0:
         k = 2 * int(smooth) + 1
