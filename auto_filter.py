@@ -423,7 +423,10 @@ def contains(small, big, ratio=0.85):
 
 
 def layer_heights(masks, contain_ratio=0.85):
-    """Assign each mask a height: leaves = 1, a mask containing height-h children = h+1.
+    """Assign each mask a height and its direct parent.
+
+    Height: leaves = 1, a mask containing height-h children = h+1. Parent: the smallest mask
+    that contains it, which is what a caller needs to rebuild the UI tree.
 
     This is a z-order that generalises across layouts: text/icons/props come out at height 1,
     the plates and buttons that hold them at 2, the cards at 3, the window at 4 - without any
@@ -431,7 +434,7 @@ def layer_heights(masks, contain_ratio=0.85):
     """
     n = len(masks)
     if n == 0:
-        return []
+        return [], []
     areas = [int(m.sum()) for m in masks]
     boxes = [bbox(m) for m in masks]
     inside = [[] for _ in range(n)]          # inside[p] = children of p
@@ -459,7 +462,13 @@ def layer_heights(masks, contain_ratio=0.85):
     for i in order:  # ascending area guarantees children resolve first
         kids = inside[i]
         height[i] = 1 + max((height[c] for c in kids), default=0)
-    return height
+    # direct parent = the smallest mask that contains this one
+    parent = [None] * n
+    for pi in range(n):
+        for ci in inside[pi]:
+            if parent[ci] is None or areas[pi] < areas[parent[ci]]:
+                parent[ci] = pi
+    return height, parent
 
 
 def auto_layers(masks, labels=None, dedupe_iou=0.85, contain_ratio=0.85, min_area=40,
@@ -468,10 +477,11 @@ def auto_layers(masks, labels=None, dedupe_iou=0.85, contain_ratio=0.85, min_are
                 straddle_hi=0.0, drop_same_label_children=False):
     """Pool masks from many prompts, clean them, and split into z-order layers (leaves first).
 
-    Returns (layers, labels_per_layer, summary) where layers[k] is a list of bool masks.
+    Returns (layers, labels_per_layer, summary, meta_per_layer). layers[k] is a list of bool
+    masks; meta[k][i] carries uid / label / votes / parent uid / box for that element.
     """
     if not masks:
-        return [], [], 'no masks'
+        return [], [], 'no masks', []
     height_px, width_px = masks[0].shape
     total = height_px * width_px
     labels = list(labels) if labels is not None else [''] * len(masks)
@@ -494,7 +504,7 @@ def auto_layers(masks, labels=None, dedupe_iou=0.85, contain_ratio=0.85, min_are
         sized.append(m)
         sized_labels.append(lb)
     if not sized:
-        return [], [], f'in={len(masks)} sized=0'
+        return [], [], f'in={len(masks)} sized=0', []
 
     kept, groups = dedupe_indexed(sized, dedupe_iou)
     prio = label_priority or []
@@ -589,22 +599,108 @@ def auto_layers(masks, labels=None, dedupe_iou=0.85, contain_ratio=0.85, min_are
             votes = [votes[i] for i in sel]
     n_granular = len(kept)
 
-    heights = layer_heights(kept, contain_ratio)
+    heights, parents = layer_heights(kept, contain_ratio)
 
-    layers, layer_labels = [], []
+    # place every kept mask on a layer, then sort each layer in reading order
+    placement = []   # (layer_no, kept_index)
     for h in range(1, max_layers + 1):
-        take = h if h < max_layers else None
-        if take is None:
+        if h == max_layers:
             sel = [i for i, v in enumerate(heights) if v >= max_layers]
         else:
             sel = [i for i, v in enumerate(heights) if v == h]
+        sel.sort(key=lambda i: (bbox(kept[i])[1] // 24, bbox(kept[i])[0]))
+        placement.append(sel)
+
+    # stable uid per element so a parent can be referenced from another layer
+    uid_of = {}
+    for li, sel in enumerate(placement, 1):
+        for pos, ki in enumerate(sel, 1):
+            uid_of[ki] = f'L{li}_{pos}'
+
+    layers, layer_labels, layer_meta = [], [], []
+    for li, sel in enumerate(placement, 1):
         group = [kept[i] for i in sel]
-        if close_holes_from and h >= close_holes_from:
+        if close_holes_from and li >= close_holes_from:
             group = [fill_holes(m) for m in group]
-        pairs = sorted(zip(group, [kept_labels[i] for i in sel]),
-                       key=lambda t: (bbox(t[0])[1] // 24, bbox(t[0])[0]))
-        layers.append([p[0] for p in pairs])
-        layer_labels.append([p[1] for p in pairs])
+        layers.append(group)
+        layer_labels.append([kept_labels[i] for i in sel])
+        meta = []
+        for pos, ki in enumerate(sel, 1):
+            x1, y1, x2, y2 = bbox(kept[ki])
+            meta.append({
+                'uid': uid_of[ki],
+                'layer': li,
+                'index': pos,
+                'label': kept_labels[ki],
+                'votes': votes[ki],
+                'parent': uid_of.get(parents[ki]) if parents[ki] is not None else None,
+                'area': int(kept[ki].sum()),
+                'x': x1, 'y': y1, 'w': x2 - x1, 'h': y2 - y1,
+            })
+        layer_meta.append(meta)
+
     summary = (f'in={len(masks)} sized={len(sized)} dedupe={n_dedupe} votes={n_votes} '
                f'straddle={n_straddle} granular={n_granular} layers=' + '/'.join(str(len(l)) for l in layers))
-    return layers, layer_labels, summary
+    return layers, layer_labels, summary, layer_meta
+
+
+# --------------------------------------------------------------------------- alpha refinement
+
+def difference_matte(image, mask, low=0.10, high=0.35, min_coverage=0.15, pad=6,
+                     smooth=1, keep_largest=True):
+    """Turn a blob-shaped mask into a shape-accurate alpha using a difference matte.
+
+    SAM3 returns text as a filled rectangle, so a "text" sprite comes out with its plate baked
+    in. The fix does not need another model: estimate what sits *behind* the mask by inpainting
+    it away, then set alpha from how far each pixel departs from that estimate. Glyph strokes
+    depart a lot, the plate behind them does not, and the transition band keeps the original
+    anti-aliasing.
+
+    `low` / `high` are colour distances in 0..1 units (max channel difference). Anything below
+    `low` becomes transparent, above `high` opaque, in between it ramps.
+
+    Guard: if the element barely differs from its surroundings (a pale panel on a pale panel)
+    the matte would erase it, so anything under `min_coverage` falls back to the original mask.
+    """
+    box = bbox(mask)
+    if box is None:
+        return mask.astype(np.float32)
+    h_img, w_img = mask.shape
+    x1 = max(0, box[0] - pad)
+    y1 = max(0, box[1] - pad)
+    x2 = min(w_img, box[2] + pad)
+    y2 = min(h_img, box[3] + pad)
+    sub = image[y1:y2, x1:x2].astype(np.float32)
+    sm = mask[y1:y2, x1:x2]
+    if sm.sum() < 12:
+        return mask.astype(np.float32)
+
+    background = inpaint_interp(sub.astype(np.uint8), sm, blur=True, blur_scale=0.35,
+                                sim_scale=14.0, blur_max=61).astype(np.float32)
+    diff = np.abs(sub - background).max(axis=2) / 255.0
+    alpha = np.clip((diff - low) / max(1e-6, high - low), 0.0, 1.0)
+    alpha[~sm] = 0.0
+
+    if keep_largest:
+        solid = (alpha > 0.5).astype(np.uint8)
+        n, lab, stats, _ = cv2.connectedComponentsWithStats(solid, connectivity=8)
+        if n > 2:
+            areas = stats[1:, cv2.CC_STAT_AREA]
+            biggest = areas.max()
+            # glyphs of one word are separate components, so keep every component that is not
+            # a speck rather than only the single largest one
+            keep = [i + 1 for i in range(len(areas)) if areas[i] >= max(6, 0.02 * biggest)]
+            if keep:
+                alpha = alpha * np.isin(lab, keep)
+
+    coverage = float((alpha > 0.5).sum()) / max(1, int(sm.sum()))
+    if coverage < min_coverage:
+        return mask.astype(np.float32)
+
+    if smooth > 0:
+        k = 2 * int(smooth) + 1
+        alpha = cv2.GaussianBlur(alpha, (k, k), 0)
+
+    out = np.zeros(mask.shape, np.float32)
+    out[y1:y2, x1:x2] = alpha
+    return out

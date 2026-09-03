@@ -577,7 +577,7 @@ class SAM3AutoLayerMasks:
     which prompt found what, so the same node works on any layout without per-image tuning.
     """
 
-    MAX_LAYERS = 6
+    MAX_LAYERS = 8
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -590,7 +590,7 @@ class SAM3AutoLayerMasks:
                 "max_area_frac": ("FLOAT", {"default": 0.98, "min": 0.01, "max": 1.0, "step": 0.01}),
                 "min_fill": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "min_dim": ("INT", {"default": 6, "min": 1, "max": 512, "step": 1}),
-                "close_holes_from": ("INT", {"default": 3, "min": 0, "max": 6, "step": 1}),
+                "close_holes_from": ("INT", {"default": 3, "min": 0, "max": 8, "step": 1}),
                 "min_votes": ("INT", {"default": 2, "min": 1, "max": 10, "step": 1}),
                 "despeckle_frac": ("FLOAT", {"default": 0.06, "min": 0.0, "max": 1.0, "step": 0.01}),
             },
@@ -599,9 +599,8 @@ class SAM3AutoLayerMasks:
             },
         }
 
-    RETURN_TYPES = ("MASK", "MASK", "MASK", "MASK", "MASK", "MASK", "STRING", "STRING")
-    RETURN_NAMES = ("LAYER_1", "LAYER_2", "LAYER_3", "LAYER_4", "LAYER_5", "LAYER_6",
-                    "LABELS_JSON", "SUMMARY")
+    RETURN_TYPES = ("MASK",) * 8 + ("STRING", "STRING")
+    RETURN_NAMES = tuple(f"LAYER_{i}" for i in range(1, 9)) + ("META_JSON", "SUMMARY")
     FUNCTION = "split"
     CATEGORY = "image/detection"
 
@@ -620,7 +619,7 @@ class SAM3AutoLayerMasks:
                 parsed = []
             if len(parsed) == len(raw):
                 name_list = [str(x) for x in parsed]
-        layers, layer_labels, summary = auto_filter.auto_layers(
+        layers, layer_labels, summary, layer_meta = auto_filter.auto_layers(
             raw, labels=name_list, dedupe_iou=float(dedupe_iou), contain_ratio=float(contain_ratio),
             min_area=int(min_area), max_area_frac=float(max_area_frac), min_fill=float(min_fill),
             min_dim=int(min_dim), max_layers=self.MAX_LAYERS, close_holes_from=int(close_holes_from),
@@ -629,8 +628,10 @@ class SAM3AutoLayerMasks:
         while len(layers) < self.MAX_LAYERS:
             layers.append([])
             layer_labels.append([])
+            layer_meta.append([])
         outs = [_bool_list_to_masks(layer, masks, size) for layer in layers[:self.MAX_LAYERS]]
-        payload = json.dumps({f"layer_{i + 1}": layer_labels[i] for i in range(self.MAX_LAYERS)})
+        payload = json.dumps({f"layer_{i + 1}": layer_meta[i] for i in range(self.MAX_LAYERS)},
+                             ensure_ascii=False)
         return (*outs, payload, summary)
 
 
@@ -646,7 +647,14 @@ class SAM3CropToRGBA:
                 "padding": ("INT", {"default": 2, "min": 0, "max": 256, "step": 1}),
                 "feather": ("INT", {"default": 1, "min": 0, "max": 16, "step": 1}),
                 "coords_prefix": ("STRING", {"default": "", "multiline": False}),
-            }
+                "layer": ("INT", {"default": 0, "min": 0, "max": 8, "step": 1}),
+                "matte": (["difference", "off"],),
+                "matte_low": ("FLOAT", {"default": 0.10, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "matte_high": ("FLOAT", {"default": 0.35, "min": 0.01, "max": 1.0, "step": 0.01}),
+            },
+            "optional": {
+                "meta_json": ("STRING", {"forceInput": True}),
+            },
         }
 
     RETURN_TYPES = ("IMAGE", "STRING")
@@ -655,7 +663,8 @@ class SAM3CropToRGBA:
     FUNCTION = "crop"
     CATEGORY = "image/crop"
 
-    def crop(self, image, masks, padding=2, feather=1, coords_prefix=""):
+    def crop(self, image, masks, padding=2, feather=1, coords_prefix="", layer=0,
+             matte="difference", matte_low=0.10, matte_high=0.35, meta_json=""):
         import cv2
         import numpy as np
 
@@ -664,6 +673,14 @@ class SAM3CropToRGBA:
         height, width = image.shape[1:3]
         rgb = _image_to_uint8(image)
         bool_masks = _masks_to_bool_list(masks, (height, width))
+        # the layer metadata from SAM3AutoLayerMasks lines up 1:1 with this layer's mask batch,
+        # so uid / label / votes / parent can travel with the sprite coordinates
+        meta_rows = []
+        if meta_json and layer:
+            try:
+                meta_rows = json.loads(meta_json).get(f"layer_{int(layer)}", [])
+            except (TypeError, ValueError, AttributeError):
+                meta_rows = []
         images = []
         coords = []
         for index, mask in enumerate(bool_masks, 1):
@@ -675,17 +692,30 @@ class SAM3CropToRGBA:
             y1 = max(0, y1 - padding)
             x2 = min(width, x2 + padding)
             y2 = min(height, y2 + padding)
-            alpha = (mask[y1:y2, x1:x2] * 255).astype(np.uint8)
+            if matte == "difference":
+                # SAM3 hands back text as a filled plate; recover the real glyph shape by
+                # measuring how far each pixel departs from an estimate of what is behind it
+                soft = auto_filter.difference_matte(rgb, mask, low=float(matte_low),
+                                                    high=float(matte_high))
+                alpha = (soft[y1:y2, x1:x2] * 255).round().astype(np.uint8)
+            else:
+                alpha = (mask[y1:y2, x1:x2] * 255).astype(np.uint8)
             if feather > 0:
                 alpha = cv2.GaussianBlur(alpha, (2 * feather + 1, 2 * feather + 1), 0)
             rgba = np.dstack([rgb[y1:y2, x1:x2], alpha]).astype(np.float32) / 255.0
             images.append(torch.from_numpy(rgba).to(dtype=image.dtype, device=image.device).unsqueeze(0))
-            coords.append({"index": index, "x": x1, "y": y1, "w": x2 - x1, "h": y2 - y1})
+            record = {"index": index, "x": x1, "y": y1, "w": x2 - x1, "h": y2 - y1}
+            if index - 1 < len(meta_rows):
+                m = meta_rows[index - 1]
+                record.update({"uid": m.get("uid"), "layer": m.get("layer"),
+                               "label": m.get("label"), "votes": m.get("votes"),
+                               "parent": m.get("parent"), "area": m.get("area")})
+            coords.append(record)
         if not images:
             # An empty layer is normal in a generic pipeline; emit a 1x1 transparent stub so the
             # graph keeps running instead of aborting the whole extraction.
             images = [torch.zeros((1, 1, 1, 4), dtype=image.dtype, device=image.device)]
-        payload = json.dumps(coords, indent=1)
+        payload = json.dumps(coords, indent=1, ensure_ascii=False)
         if coords_prefix.strip():
             try:
                 import folder_paths
