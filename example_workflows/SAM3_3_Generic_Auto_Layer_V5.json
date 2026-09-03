@@ -1,6 +1,6 @@
 {
- "last_node_id": 102,
- "last_link_id": 205,
+ "last_node_id": 114,
+ "last_link_id": 223,
  "nodes": [
   {
    "id": 1,
@@ -23,7 +23,7 @@
     "Node name for S&R": "MarkdownNote"
    },
    "widgets_values": [
-    "# V5：通用自動分層（同一套流程跑任何 UI／場景圖）\n\n28 個提示詞全部在**原圖**上跑，遮罩全部倒進同一個池子，再由 `Auto Layer SAM3 Masks` 依**包含關係**自動排出 z-order：\n\n- **LAYER_1** 葉節點：文字、圖示、道具\n- **LAYER_2** 承載它們的按鈕／緞帶／輸入框\n- **LAYER_3～6** 卡片、面板、外框、背景\n\n沒有任何一階段綁定特定圖片的提示詞，換圖不用改參數。\n\n`min_votes=2` 是共識門檻：同一個東西要有兩個以上提示詞找到才算數，單一提示詞的幻覺會被濾掉。想要更乾淨就調高，想要更完整就調成 1。\n\n每層依序：先存編號預覽 → 切出透明 PNG 與座標 JSON → 用確定性補洞把該層從畫布移除，交給下一層。最後 `background/final` 是乾淨背景。補洞不使用擴散模型，不會生出假文字。"
+    "# V5：通用自動分層（同一套流程跑任何 UI／場景圖）\n\n28 個提示詞全部在**原圖**上跑，遮罩全部倒進同一個池子，再由 `Auto Layer SAM3 Masks` 依**包含關係**自動排出 z-order：\n\n- **LAYER_1** 葉節點：文字、圖示、道具\n- **LAYER_2** 承載它們的按鈕／緞帶／輸入框\n- **LAYER_3～6** 卡片、面板、外框、背景\n\n沒有任何一階段綁定特定圖片的提示詞，換圖不用改參數。\n\n`min_votes=2` 是共識門檻：同一個東西要有兩個以上提示詞找到才算數，單一提示詞的幻覺會被濾掉。想要更乾淨就調高，想要更完整就調成 1。\n\n每層輸出兩份透明 PNG：`asset` 是移除下層後的乾淨容器（按鈕、卡片、面板要用這份），`flat` 是直接從原圖切下的原樣（整段文字、logo 要用這份）。接著用確定性補洞把該層從畫布移除，交給下一層。最後 `background/final` 是乾淨背景。補洞不使用擴散模型，不會生出假文字。"
    ]
   },
   {
@@ -76,7 +76,13 @@
       111,
       151,
       154,
-      157
+      157,
+      160,
+      169,
+      181,
+      193,
+      205,
+      217
      ],
      "slot_index": 0
     },
@@ -3308,7 +3314,8 @@
      "links": [
       152,
       155,
-      158
+      158,
+      161
      ],
      "slot_index": 0
     },
@@ -3316,9 +3323,10 @@
      "name": "LAYER_2",
      "type": "MASK",
      "links": [
-      161,
       164,
-      167
+      167,
+      170,
+      173
      ],
      "slot_index": 1
     },
@@ -3326,9 +3334,10 @@
      "name": "LAYER_3",
      "type": "MASK",
      "links": [
-      170,
-      173,
-      176
+      176,
+      179,
+      182,
+      185
      ],
      "slot_index": 2
     },
@@ -3336,9 +3345,10 @@
      "name": "LAYER_4",
      "type": "MASK",
      "links": [
-      179,
-      182,
-      185
+      188,
+      191,
+      194,
+      197
      ],
      "slot_index": 3
     },
@@ -3346,9 +3356,10 @@
      "name": "LAYER_5",
      "type": "MASK",
      "links": [
-      188,
-      191,
-      194
+      200,
+      203,
+      206,
+      209
      ],
      "slot_index": 4
     },
@@ -3356,9 +3367,10 @@
      "name": "LAYER_6",
      "type": "MASK",
      "links": [
-      197,
-      200,
-      203
+      212,
+      215,
+      218,
+      221
      ],
      "slot_index": 5
     },
@@ -3527,7 +3539,7 @@
      "slot_index": 1
     }
    ],
-   "title": "01 葉節點（文字／圖示／道具） 切透明資產",
+   "title": "01 葉節點（文字／圖示／道具） 切透明資產（去除下層後）",
    "properties": {
     "Node name for S&R": "SAM3CropToRGBA"
    },
@@ -3559,7 +3571,7 @@
     }
    ],
    "outputs": [],
-   "title": "✓ 01 葉節點（文字／圖示／道具） 資產",
+   "title": "✓ 01 葉節點（文字／圖示／道具） 資產（乾淨容器）",
    "properties": {
     "Node name for S&R": "SaveImage"
    },
@@ -3569,10 +3581,10 @@
   },
   {
    "id": 70,
-   "type": "SAM3DeterministicInpaint",
+   "type": "SAM3CropToRGBA",
    "pos": [
     2150,
-    -140
+    -205
    ],
    "size": [
     380,
@@ -3595,13 +3607,95 @@
    ],
    "outputs": [
     {
+     "name": "RGBA_IMAGES",
+     "type": "IMAGE",
+     "links": [
+      159
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "COORDS_JSON",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 1
+    }
+   ],
+   "title": "01 葉節點（文字／圖示／道具） 切透明資產（原圖直切）",
+   "properties": {
+    "Node name for S&R": "SAM3CropToRGBA"
+   },
+   "widgets_values": [
+    2,
+    1,
+    "sam3_auto_v5/layer1/flat"
+   ]
+  },
+  {
+   "id": 71,
+   "type": "SaveImage",
+   "pos": [
+    2580,
+    -205
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 70,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 159
+    }
+   ],
+   "outputs": [],
+   "title": "✓ 01 葉節點（文字／圖示／道具） 資產（原圖外觀）",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v5/layer1/flat"
+   ]
+  },
+  {
+   "id": 72,
+   "type": "SAM3DeterministicInpaint",
+   "pos": [
+    2150,
+    -140
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 71,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 160
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 161
+    }
+   ],
+   "outputs": [
+    {
      "name": "INPAINTED_IMAGE",
      "type": "IMAGE",
      "links": [
-      159,
-      160,
+      162,
       163,
-      166
+      166,
+      172
      ],
      "slot_index": 0
     }
@@ -3625,7 +3719,7 @@
    ]
   },
   {
-   "id": 71,
+   "id": 73,
    "type": "SaveImage",
    "pos": [
     2580,
@@ -3636,13 +3730,13 @@
     130
    ],
    "flags": {},
-   "order": 70,
+   "order": 72,
    "mode": 0,
    "inputs": [
     {
      "name": "images",
      "type": "IMAGE",
-     "link": 159
+     "link": 162
     }
    ],
    "outputs": [],
@@ -3655,7 +3749,7 @@
    ]
   },
   {
-   "id": 72,
+   "id": 74,
    "type": "SAM3MaskReview",
    "pos": [
     2150,
@@ -3666,18 +3760,18 @@
     130
    ],
    "flags": {},
-   "order": 71,
+   "order": 73,
    "mode": 0,
    "inputs": [
     {
      "name": "image",
      "type": "IMAGE",
-     "link": 160
+     "link": 163
     },
     {
      "name": "masks",
      "type": "MASK",
-     "link": 161
+     "link": 164
     }
    ],
    "outputs": [
@@ -3685,7 +3779,7 @@
      "name": "NUMBERED_PREVIEW",
      "type": "IMAGE",
      "links": [
-      162
+      165
      ],
      "slot_index": 0
     },
@@ -3719,93 +3813,11 @@
    ]
   },
   {
-   "id": 73,
-   "type": "SaveImage",
-   "pos": [
-    2580,
-    20
-   ],
-   "size": [
-    380,
-    130
-   ],
-   "flags": {},
-   "order": 72,
-   "mode": 0,
-   "inputs": [
-    {
-     "name": "images",
-     "type": "IMAGE",
-     "link": 162
-    }
-   ],
-   "outputs": [],
-   "title": "02 承載層（按鈕／緞帶／輸入框） 預覽",
-   "properties": {
-    "Node name for S&R": "SaveImage"
-   },
-   "widgets_values": [
-    "sam3_auto_v5/layer2/preview"
-   ]
-  },
-  {
-   "id": 74,
-   "type": "SAM3CropToRGBA",
-   "pos": [
-    2150,
-    150
-   ],
-   "size": [
-    380,
-    130
-   ],
-   "flags": {},
-   "order": 73,
-   "mode": 0,
-   "inputs": [
-    {
-     "name": "image",
-     "type": "IMAGE",
-     "link": 163
-    },
-    {
-     "name": "masks",
-     "type": "MASK",
-     "link": 164
-    }
-   ],
-   "outputs": [
-    {
-     "name": "RGBA_IMAGES",
-     "type": "IMAGE",
-     "links": [
-      165
-     ],
-     "slot_index": 0
-    },
-    {
-     "name": "COORDS_JSON",
-     "type": "STRING",
-     "links": [],
-     "slot_index": 1
-    }
-   ],
-   "title": "02 承載層（按鈕／緞帶／輸入框） 切透明資產",
-   "properties": {
-    "Node name for S&R": "SAM3CropToRGBA"
-   },
-   "widgets_values": [
-    2,
-    1,
-    "sam3_auto_v5/layer2/asset"
-   ]
-  },
-  {
    "id": 75,
    "type": "SaveImage",
    "pos": [
     2580,
-    150
+    20
    ],
    "size": [
     380,
@@ -3822,20 +3834,20 @@
     }
    ],
    "outputs": [],
-   "title": "✓ 02 承載層（按鈕／緞帶／輸入框） 資產",
+   "title": "02 承載層（按鈕／緞帶／輸入框） 預覽",
    "properties": {
     "Node name for S&R": "SaveImage"
    },
    "widgets_values": [
-    "sam3_auto_v5/layer2/asset"
+    "sam3_auto_v5/layer2/preview"
    ]
   },
   {
    "id": 76,
-   "type": "SAM3DeterministicInpaint",
+   "type": "SAM3CropToRGBA",
    "pos": [
     2150,
-    280
+    150
    ],
    "size": [
     380,
@@ -3858,13 +3870,177 @@
    ],
    "outputs": [
     {
+     "name": "RGBA_IMAGES",
+     "type": "IMAGE",
+     "links": [
+      168
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "COORDS_JSON",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 1
+    }
+   ],
+   "title": "02 承載層（按鈕／緞帶／輸入框） 切透明資產（去除下層後）",
+   "properties": {
+    "Node name for S&R": "SAM3CropToRGBA"
+   },
+   "widgets_values": [
+    2,
+    1,
+    "sam3_auto_v5/layer2/asset"
+   ]
+  },
+  {
+   "id": 77,
+   "type": "SaveImage",
+   "pos": [
+    2580,
+    150
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 76,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 168
+    }
+   ],
+   "outputs": [],
+   "title": "✓ 02 承載層（按鈕／緞帶／輸入框） 資產（乾淨容器）",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v5/layer2/asset"
+   ]
+  },
+  {
+   "id": 78,
+   "type": "SAM3CropToRGBA",
+   "pos": [
+    2150,
+    215
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 77,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 169
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 170
+    }
+   ],
+   "outputs": [
+    {
+     "name": "RGBA_IMAGES",
+     "type": "IMAGE",
+     "links": [
+      171
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "COORDS_JSON",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 1
+    }
+   ],
+   "title": "02 承載層（按鈕／緞帶／輸入框） 切透明資產（原圖直切）",
+   "properties": {
+    "Node name for S&R": "SAM3CropToRGBA"
+   },
+   "widgets_values": [
+    2,
+    1,
+    "sam3_auto_v5/layer2/flat"
+   ]
+  },
+  {
+   "id": 79,
+   "type": "SaveImage",
+   "pos": [
+    2580,
+    215
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 78,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 171
+    }
+   ],
+   "outputs": [],
+   "title": "✓ 02 承載層（按鈕／緞帶／輸入框） 資產（原圖外觀）",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v5/layer2/flat"
+   ]
+  },
+  {
+   "id": 80,
+   "type": "SAM3DeterministicInpaint",
+   "pos": [
+    2150,
+    280
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 79,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 172
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 173
+    }
+   ],
+   "outputs": [
+    {
      "name": "INPAINTED_IMAGE",
      "type": "IMAGE",
      "links": [
-      168,
-      169,
-      172,
-      175
+      174,
+      175,
+      178,
+      184
      ],
      "slot_index": 0
     }
@@ -3888,7 +4064,7 @@
    ]
   },
   {
-   "id": 77,
+   "id": 81,
    "type": "SaveImage",
    "pos": [
     2580,
@@ -3899,13 +4075,13 @@
     130
    ],
    "flags": {},
-   "order": 76,
+   "order": 80,
    "mode": 0,
    "inputs": [
     {
      "name": "images",
      "type": "IMAGE",
-     "link": 168
+     "link": 174
     }
    ],
    "outputs": [],
@@ -3918,7 +4094,7 @@
    ]
   },
   {
-   "id": 78,
+   "id": 82,
    "type": "SAM3MaskReview",
    "pos": [
     2150,
@@ -3929,18 +4105,18 @@
     130
    ],
    "flags": {},
-   "order": 77,
+   "order": 81,
    "mode": 0,
    "inputs": [
     {
      "name": "image",
      "type": "IMAGE",
-     "link": 169
+     "link": 175
     },
     {
      "name": "masks",
      "type": "MASK",
-     "link": 170
+     "link": 176
     }
    ],
    "outputs": [
@@ -3948,7 +4124,7 @@
      "name": "NUMBERED_PREVIEW",
      "type": "IMAGE",
      "links": [
-      171
+      177
      ],
      "slot_index": 0
     },
@@ -3982,180 +4158,11 @@
    ]
   },
   {
-   "id": 79,
-   "type": "SaveImage",
-   "pos": [
-    2580,
-    440
-   ],
-   "size": [
-    380,
-    130
-   ],
-   "flags": {},
-   "order": 78,
-   "mode": 0,
-   "inputs": [
-    {
-     "name": "images",
-     "type": "IMAGE",
-     "link": 171
-    }
-   ],
-   "outputs": [],
-   "title": "03 卡片層 預覽",
-   "properties": {
-    "Node name for S&R": "SaveImage"
-   },
-   "widgets_values": [
-    "sam3_auto_v5/layer3/preview"
-   ]
-  },
-  {
-   "id": 80,
-   "type": "SAM3CropToRGBA",
-   "pos": [
-    2150,
-    570
-   ],
-   "size": [
-    380,
-    130
-   ],
-   "flags": {},
-   "order": 79,
-   "mode": 0,
-   "inputs": [
-    {
-     "name": "image",
-     "type": "IMAGE",
-     "link": 172
-    },
-    {
-     "name": "masks",
-     "type": "MASK",
-     "link": 173
-    }
-   ],
-   "outputs": [
-    {
-     "name": "RGBA_IMAGES",
-     "type": "IMAGE",
-     "links": [
-      174
-     ],
-     "slot_index": 0
-    },
-    {
-     "name": "COORDS_JSON",
-     "type": "STRING",
-     "links": [],
-     "slot_index": 1
-    }
-   ],
-   "title": "03 卡片層 切透明資產",
-   "properties": {
-    "Node name for S&R": "SAM3CropToRGBA"
-   },
-   "widgets_values": [
-    2,
-    1,
-    "sam3_auto_v5/layer3/asset"
-   ]
-  },
-  {
-   "id": 81,
-   "type": "SaveImage",
-   "pos": [
-    2580,
-    570
-   ],
-   "size": [
-    380,
-    130
-   ],
-   "flags": {},
-   "order": 80,
-   "mode": 0,
-   "inputs": [
-    {
-     "name": "images",
-     "type": "IMAGE",
-     "link": 174
-    }
-   ],
-   "outputs": [],
-   "title": "✓ 03 卡片層 資產",
-   "properties": {
-    "Node name for S&R": "SaveImage"
-   },
-   "widgets_values": [
-    "sam3_auto_v5/layer3/asset"
-   ]
-  },
-  {
-   "id": 82,
-   "type": "SAM3DeterministicInpaint",
-   "pos": [
-    2150,
-    700
-   ],
-   "size": [
-    380,
-    130
-   ],
-   "flags": {},
-   "order": 81,
-   "mode": 0,
-   "inputs": [
-    {
-     "name": "image",
-     "type": "IMAGE",
-     "link": 175
-    },
-    {
-     "name": "masks",
-     "type": "MASK",
-     "link": 176
-    }
-   ],
-   "outputs": [
-    {
-     "name": "INPAINTED_IMAGE",
-     "type": "IMAGE",
-     "links": [
-      177,
-      178,
-      181,
-      184
-     ],
-     "slot_index": 0
-    }
-   ],
-   "title": "03 卡片層 確定性補洞",
-   "properties": {
-    "Node name for S&R": "SAM3DeterministicInpaint"
-   },
-   "widgets_values": [
-    "interp",
-    5,
-    20,
-    5,
-    18,
-    13.0,
-    30.0,
-    0.6,
-    12.0,
-    0.3,
-    61
-   ]
-  },
-  {
    "id": 83,
    "type": "SaveImage",
    "pos": [
     2580,
-    700
+    440
    ],
    "size": [
     380,
@@ -4172,20 +4179,20 @@
     }
    ],
    "outputs": [],
-   "title": "03 卡片層 補圖",
+   "title": "03 卡片層 預覽",
    "properties": {
     "Node name for S&R": "SaveImage"
    },
    "widgets_values": [
-    "sam3_auto_v5/layer3/filled"
+    "sam3_auto_v5/layer3/preview"
    ]
   },
   {
    "id": 84,
-   "type": "SAM3MaskReview",
+   "type": "SAM3CropToRGBA",
    "pos": [
     2150,
-    860
+    570
    ],
    "size": [
     380,
@@ -4208,7 +4215,7 @@
    ],
    "outputs": [
     {
-     "name": "NUMBERED_PREVIEW",
+     "name": "RGBA_IMAGES",
      "type": "IMAGE",
      "links": [
       180
@@ -4216,32 +4223,20 @@
      "slot_index": 0
     },
     {
-     "name": "ASSET_MASKS",
-     "type": "MASK",
-     "links": [],
-     "slot_index": 1
-    },
-    {
-     "name": "FILL_MASKS",
-     "type": "MASK",
-     "links": [],
-     "slot_index": 2
-    },
-    {
-     "name": "SUMMARY",
+     "name": "COORDS_JSON",
      "type": "STRING",
      "links": [],
-     "slot_index": 3
+     "slot_index": 1
     }
    ],
-   "title": "04 面板層 編號預覽",
+   "title": "03 卡片層 切透明資產（去除下層後）",
    "properties": {
-    "Node name for S&R": "SAM3MaskReview"
+    "Node name for S&R": "SAM3CropToRGBA"
    },
    "widgets_values": [
-    "",
-    0,
-    0.32
+    2,
+    1,
+    "sam3_auto_v5/layer3/asset"
    ]
   },
   {
@@ -4249,7 +4244,7 @@
    "type": "SaveImage",
    "pos": [
     2580,
-    860
+    570
    ],
    "size": [
     380,
@@ -4266,12 +4261,12 @@
     }
    ],
    "outputs": [],
-   "title": "04 面板層 預覽",
+   "title": "✓ 03 卡片層 資產（乾淨容器）",
    "properties": {
     "Node name for S&R": "SaveImage"
    },
    "widgets_values": [
-    "sam3_auto_v5/layer4/preview"
+    "sam3_auto_v5/layer3/asset"
    ]
   },
   {
@@ -4279,7 +4274,7 @@
    "type": "SAM3CropToRGBA",
    "pos": [
     2150,
-    990
+    635
    ],
    "size": [
     380,
@@ -4316,14 +4311,14 @@
      "slot_index": 1
     }
    ],
-   "title": "04 面板層 切透明資產",
+   "title": "03 卡片層 切透明資產（原圖直切）",
    "properties": {
     "Node name for S&R": "SAM3CropToRGBA"
    },
    "widgets_values": [
     2,
     1,
-    "sam3_auto_v5/layer4/asset"
+    "sam3_auto_v5/layer3/flat"
    ]
   },
   {
@@ -4331,7 +4326,7 @@
    "type": "SaveImage",
    "pos": [
     2580,
-    990
+    635
    ],
    "size": [
     380,
@@ -4348,12 +4343,12 @@
     }
    ],
    "outputs": [],
-   "title": "✓ 04 面板層 資產",
+   "title": "✓ 03 卡片層 資產（原圖外觀）",
    "properties": {
     "Node name for S&R": "SaveImage"
    },
    "widgets_values": [
-    "sam3_auto_v5/layer4/asset"
+    "sam3_auto_v5/layer3/flat"
    ]
   },
   {
@@ -4361,7 +4356,7 @@
    "type": "SAM3DeterministicInpaint",
    "pos": [
     2150,
-    1120
+    700
    ],
    "size": [
     380,
@@ -4390,12 +4385,12 @@
       186,
       187,
       190,
-      193
+      196
      ],
      "slot_index": 0
     }
    ],
-   "title": "04 面板層 確定性補洞",
+   "title": "03 卡片層 確定性補洞",
    "properties": {
     "Node name for S&R": "SAM3DeterministicInpaint"
    },
@@ -4418,7 +4413,7 @@
    "type": "SaveImage",
    "pos": [
     2580,
-    1120
+    700
    ],
    "size": [
     380,
@@ -4435,12 +4430,12 @@
     }
    ],
    "outputs": [],
-   "title": "04 面板層 補圖",
+   "title": "03 卡片層 補圖",
    "properties": {
     "Node name for S&R": "SaveImage"
    },
    "widgets_values": [
-    "sam3_auto_v5/layer4/filled"
+    "sam3_auto_v5/layer3/filled"
    ]
   },
   {
@@ -4448,7 +4443,7 @@
    "type": "SAM3MaskReview",
    "pos": [
     2150,
-    1280
+    860
    ],
    "size": [
     380,
@@ -4497,7 +4492,7 @@
      "slot_index": 3
     }
    ],
-   "title": "05 外框層 編號預覽",
+   "title": "04 面板層 編號預覽",
    "properties": {
     "Node name for S&R": "SAM3MaskReview"
    },
@@ -4512,7 +4507,7 @@
    "type": "SaveImage",
    "pos": [
     2580,
-    1280
+    860
    ],
    "size": [
     380,
@@ -4529,12 +4524,12 @@
     }
    ],
    "outputs": [],
-   "title": "05 外框層 預覽",
+   "title": "04 面板層 預覽",
    "properties": {
     "Node name for S&R": "SaveImage"
    },
    "widgets_values": [
-    "sam3_auto_v5/layer5/preview"
+    "sam3_auto_v5/layer4/preview"
    ]
   },
   {
@@ -4542,7 +4537,7 @@
    "type": "SAM3CropToRGBA",
    "pos": [
     2150,
-    1410
+    990
    ],
    "size": [
     380,
@@ -4579,14 +4574,14 @@
      "slot_index": 1
     }
    ],
-   "title": "05 外框層 切透明資產",
+   "title": "04 面板層 切透明資產（去除下層後）",
    "properties": {
     "Node name for S&R": "SAM3CropToRGBA"
    },
    "widgets_values": [
     2,
     1,
-    "sam3_auto_v5/layer5/asset"
+    "sam3_auto_v5/layer4/asset"
    ]
   },
   {
@@ -4594,7 +4589,7 @@
    "type": "SaveImage",
    "pos": [
     2580,
-    1410
+    990
    ],
    "size": [
     380,
@@ -4611,20 +4606,20 @@
     }
    ],
    "outputs": [],
-   "title": "✓ 05 外框層 資產",
+   "title": "✓ 04 面板層 資產（乾淨容器）",
    "properties": {
     "Node name for S&R": "SaveImage"
    },
    "widgets_values": [
-    "sam3_auto_v5/layer5/asset"
+    "sam3_auto_v5/layer4/asset"
    ]
   },
   {
    "id": 94,
-   "type": "SAM3DeterministicInpaint",
+   "type": "SAM3CropToRGBA",
    "pos": [
     2150,
-    1540
+    1055
    ],
    "size": [
     380,
@@ -4647,13 +4642,440 @@
    ],
    "outputs": [
     {
+     "name": "RGBA_IMAGES",
+     "type": "IMAGE",
+     "links": [
+      195
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "COORDS_JSON",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 1
+    }
+   ],
+   "title": "04 面板層 切透明資產（原圖直切）",
+   "properties": {
+    "Node name for S&R": "SAM3CropToRGBA"
+   },
+   "widgets_values": [
+    2,
+    1,
+    "sam3_auto_v5/layer4/flat"
+   ]
+  },
+  {
+   "id": 95,
+   "type": "SaveImage",
+   "pos": [
+    2580,
+    1055
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 94,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 195
+    }
+   ],
+   "outputs": [],
+   "title": "✓ 04 面板層 資產（原圖外觀）",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v5/layer4/flat"
+   ]
+  },
+  {
+   "id": 96,
+   "type": "SAM3DeterministicInpaint",
+   "pos": [
+    2150,
+    1120
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 95,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 196
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 197
+    }
+   ],
+   "outputs": [
+    {
      "name": "INPAINTED_IMAGE",
      "type": "IMAGE",
      "links": [
-      195,
-      196,
+      198,
       199,
-      202
+      202,
+      208
+     ],
+     "slot_index": 0
+    }
+   ],
+   "title": "04 面板層 確定性補洞",
+   "properties": {
+    "Node name for S&R": "SAM3DeterministicInpaint"
+   },
+   "widgets_values": [
+    "interp",
+    5,
+    20,
+    5,
+    18,
+    13.0,
+    30.0,
+    0.6,
+    12.0,
+    0.3,
+    61
+   ]
+  },
+  {
+   "id": 97,
+   "type": "SaveImage",
+   "pos": [
+    2580,
+    1120
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 96,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 198
+    }
+   ],
+   "outputs": [],
+   "title": "04 面板層 補圖",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v5/layer4/filled"
+   ]
+  },
+  {
+   "id": 98,
+   "type": "SAM3MaskReview",
+   "pos": [
+    2150,
+    1280
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 97,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 199
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 200
+    }
+   ],
+   "outputs": [
+    {
+     "name": "NUMBERED_PREVIEW",
+     "type": "IMAGE",
+     "links": [
+      201
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "ASSET_MASKS",
+     "type": "MASK",
+     "links": [],
+     "slot_index": 1
+    },
+    {
+     "name": "FILL_MASKS",
+     "type": "MASK",
+     "links": [],
+     "slot_index": 2
+    },
+    {
+     "name": "SUMMARY",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 3
+    }
+   ],
+   "title": "05 外框層 編號預覽",
+   "properties": {
+    "Node name for S&R": "SAM3MaskReview"
+   },
+   "widgets_values": [
+    "",
+    0,
+    0.32
+   ]
+  },
+  {
+   "id": 99,
+   "type": "SaveImage",
+   "pos": [
+    2580,
+    1280
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 98,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 201
+    }
+   ],
+   "outputs": [],
+   "title": "05 外框層 預覽",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v5/layer5/preview"
+   ]
+  },
+  {
+   "id": 100,
+   "type": "SAM3CropToRGBA",
+   "pos": [
+    2150,
+    1410
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 99,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 202
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 203
+    }
+   ],
+   "outputs": [
+    {
+     "name": "RGBA_IMAGES",
+     "type": "IMAGE",
+     "links": [
+      204
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "COORDS_JSON",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 1
+    }
+   ],
+   "title": "05 外框層 切透明資產（去除下層後）",
+   "properties": {
+    "Node name for S&R": "SAM3CropToRGBA"
+   },
+   "widgets_values": [
+    2,
+    1,
+    "sam3_auto_v5/layer5/asset"
+   ]
+  },
+  {
+   "id": 101,
+   "type": "SaveImage",
+   "pos": [
+    2580,
+    1410
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 100,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 204
+    }
+   ],
+   "outputs": [],
+   "title": "✓ 05 外框層 資產（乾淨容器）",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v5/layer5/asset"
+   ]
+  },
+  {
+   "id": 102,
+   "type": "SAM3CropToRGBA",
+   "pos": [
+    2150,
+    1475
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 101,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 205
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 206
+    }
+   ],
+   "outputs": [
+    {
+     "name": "RGBA_IMAGES",
+     "type": "IMAGE",
+     "links": [
+      207
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "COORDS_JSON",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 1
+    }
+   ],
+   "title": "05 外框層 切透明資產（原圖直切）",
+   "properties": {
+    "Node name for S&R": "SAM3CropToRGBA"
+   },
+   "widgets_values": [
+    2,
+    1,
+    "sam3_auto_v5/layer5/flat"
+   ]
+  },
+  {
+   "id": 103,
+   "type": "SaveImage",
+   "pos": [
+    2580,
+    1475
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 102,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 207
+    }
+   ],
+   "outputs": [],
+   "title": "✓ 05 外框層 資產（原圖外觀）",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v5/layer5/flat"
+   ]
+  },
+  {
+   "id": 104,
+   "type": "SAM3DeterministicInpaint",
+   "pos": [
+    2150,
+    1540
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 103,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 208
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 209
+    }
+   ],
+   "outputs": [
+    {
+     "name": "INPAINTED_IMAGE",
+     "type": "IMAGE",
+     "links": [
+      210,
+      211,
+      214,
+      220
      ],
      "slot_index": 0
     }
@@ -4677,7 +5099,7 @@
    ]
   },
   {
-   "id": 95,
+   "id": 105,
    "type": "SaveImage",
    "pos": [
     2580,
@@ -4688,13 +5110,13 @@
     130
    ],
    "flags": {},
-   "order": 94,
+   "order": 104,
    "mode": 0,
    "inputs": [
     {
      "name": "images",
      "type": "IMAGE",
-     "link": 195
+     "link": 210
     }
    ],
    "outputs": [],
@@ -4707,7 +5129,7 @@
    ]
   },
   {
-   "id": 96,
+   "id": 106,
    "type": "SAM3MaskReview",
    "pos": [
     2150,
@@ -4718,18 +5140,18 @@
     130
    ],
    "flags": {},
-   "order": 95,
+   "order": 105,
    "mode": 0,
    "inputs": [
     {
      "name": "image",
      "type": "IMAGE",
-     "link": 196
+     "link": 211
     },
     {
      "name": "masks",
      "type": "MASK",
-     "link": 197
+     "link": 212
     }
    ],
    "outputs": [
@@ -4737,7 +5159,7 @@
      "name": "NUMBERED_PREVIEW",
      "type": "IMAGE",
      "links": [
-      198
+      213
      ],
      "slot_index": 0
     },
@@ -4771,7 +5193,7 @@
    ]
   },
   {
-   "id": 97,
+   "id": 107,
    "type": "SaveImage",
    "pos": [
     2580,
@@ -4782,13 +5204,13 @@
     130
    ],
    "flags": {},
-   "order": 96,
+   "order": 106,
    "mode": 0,
    "inputs": [
     {
      "name": "images",
      "type": "IMAGE",
-     "link": 198
+     "link": 213
     }
    ],
    "outputs": [],
@@ -4801,7 +5223,7 @@
    ]
   },
   {
-   "id": 98,
+   "id": 108,
    "type": "SAM3CropToRGBA",
    "pos": [
     2150,
@@ -4812,18 +5234,18 @@
     130
    ],
    "flags": {},
-   "order": 97,
+   "order": 107,
    "mode": 0,
    "inputs": [
     {
      "name": "image",
      "type": "IMAGE",
-     "link": 199
+     "link": 214
     },
     {
      "name": "masks",
      "type": "MASK",
-     "link": 200
+     "link": 215
     }
    ],
    "outputs": [
@@ -4831,7 +5253,7 @@
      "name": "RGBA_IMAGES",
      "type": "IMAGE",
      "links": [
-      201
+      216
      ],
      "slot_index": 0
     },
@@ -4842,7 +5264,7 @@
      "slot_index": 1
     }
    ],
-   "title": "06 背景層 切透明資產",
+   "title": "06 背景層 切透明資產（去除下層後）",
    "properties": {
     "Node name for S&R": "SAM3CropToRGBA"
    },
@@ -4853,7 +5275,7 @@
    ]
   },
   {
-   "id": 99,
+   "id": 109,
    "type": "SaveImage",
    "pos": [
     2580,
@@ -4864,17 +5286,17 @@
     130
    ],
    "flags": {},
-   "order": 98,
+   "order": 108,
    "mode": 0,
    "inputs": [
     {
      "name": "images",
      "type": "IMAGE",
-     "link": 201
+     "link": 216
     }
    ],
    "outputs": [],
-   "title": "✓ 06 背景層 資產",
+   "title": "✓ 06 背景層 資產（乾淨容器）",
    "properties": {
     "Node name for S&R": "SaveImage"
    },
@@ -4883,7 +5305,89 @@
    ]
   },
   {
-   "id": 100,
+   "id": 110,
+   "type": "SAM3CropToRGBA",
+   "pos": [
+    2150,
+    1895
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 109,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 217
+    },
+    {
+     "name": "masks",
+     "type": "MASK",
+     "link": 218
+    }
+   ],
+   "outputs": [
+    {
+     "name": "RGBA_IMAGES",
+     "type": "IMAGE",
+     "links": [
+      219
+     ],
+     "slot_index": 0
+    },
+    {
+     "name": "COORDS_JSON",
+     "type": "STRING",
+     "links": [],
+     "slot_index": 1
+    }
+   ],
+   "title": "06 背景層 切透明資產（原圖直切）",
+   "properties": {
+    "Node name for S&R": "SAM3CropToRGBA"
+   },
+   "widgets_values": [
+    2,
+    1,
+    "sam3_auto_v5/layer6/flat"
+   ]
+  },
+  {
+   "id": 111,
+   "type": "SaveImage",
+   "pos": [
+    2580,
+    1895
+   ],
+   "size": [
+    380,
+    130
+   ],
+   "flags": {},
+   "order": 110,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 219
+    }
+   ],
+   "outputs": [],
+   "title": "✓ 06 背景層 資產（原圖外觀）",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "sam3_auto_v5/layer6/flat"
+   ]
+  },
+  {
+   "id": 112,
    "type": "SAM3DeterministicInpaint",
    "pos": [
     2150,
@@ -4894,18 +5398,18 @@
     130
    ],
    "flags": {},
-   "order": 99,
+   "order": 111,
    "mode": 0,
    "inputs": [
     {
      "name": "image",
      "type": "IMAGE",
-     "link": 202
+     "link": 220
     },
     {
      "name": "masks",
      "type": "MASK",
-     "link": 203
+     "link": 221
     }
    ],
    "outputs": [
@@ -4913,8 +5417,8 @@
      "name": "INPAINTED_IMAGE",
      "type": "IMAGE",
      "links": [
-      204,
-      205
+      222,
+      223
      ],
      "slot_index": 0
     }
@@ -4938,7 +5442,7 @@
    ]
   },
   {
-   "id": 101,
+   "id": 113,
    "type": "SaveImage",
    "pos": [
     2580,
@@ -4949,13 +5453,13 @@
     130
    ],
    "flags": {},
-   "order": 100,
+   "order": 112,
    "mode": 0,
    "inputs": [
     {
      "name": "images",
      "type": "IMAGE",
-     "link": 204
+     "link": 222
     }
    ],
    "outputs": [],
@@ -4968,7 +5472,7 @@
    ]
   },
   {
-   "id": 102,
+   "id": 114,
    "type": "SaveImage",
    "pos": [
     2580,
@@ -4979,13 +5483,13 @@
     130
    ],
    "flags": {},
-   "order": 101,
+   "order": 113,
    "mode": 0,
    "inputs": [
     {
      "name": "images",
      "type": "IMAGE",
-     "link": 205
+     "link": 223
     }
    ],
    "outputs": [],
@@ -6273,7 +6777,7 @@
   ],
   [
    160,
-   70,
+   2,
    0,
    72,
    0,
@@ -6282,7 +6786,7 @@
   [
    161,
    65,
-   1,
+   0,
    72,
    1,
    "MASK"
@@ -6297,7 +6801,7 @@
   ],
   [
    163,
-   70,
+   72,
    0,
    74,
    0,
@@ -6321,7 +6825,7 @@
   ],
   [
    166,
-   70,
+   72,
    0,
    76,
    0,
@@ -6345,7 +6849,7 @@
   ],
   [
    169,
-   76,
+   2,
    0,
    78,
    0,
@@ -6354,7 +6858,7 @@
   [
    170,
    65,
-   2,
+   1,
    78,
    1,
    "MASK"
@@ -6369,7 +6873,7 @@
   ],
   [
    172,
-   76,
+   72,
    0,
    80,
    0,
@@ -6378,7 +6882,7 @@
   [
    173,
    65,
-   2,
+   1,
    80,
    1,
    "MASK"
@@ -6393,7 +6897,7 @@
   ],
   [
    175,
-   76,
+   80,
    0,
    82,
    0,
@@ -6417,7 +6921,7 @@
   ],
   [
    178,
-   82,
+   80,
    0,
    84,
    0,
@@ -6426,7 +6930,7 @@
   [
    179,
    65,
-   3,
+   2,
    84,
    1,
    "MASK"
@@ -6441,7 +6945,7 @@
   ],
   [
    181,
-   82,
+   2,
    0,
    86,
    0,
@@ -6450,7 +6954,7 @@
   [
    182,
    65,
-   3,
+   2,
    86,
    1,
    "MASK"
@@ -6465,7 +6969,7 @@
   ],
   [
    184,
-   82,
+   80,
    0,
    88,
    0,
@@ -6474,7 +6978,7 @@
   [
    185,
    65,
-   3,
+   2,
    88,
    1,
    "MASK"
@@ -6498,7 +7002,7 @@
   [
    188,
    65,
-   4,
+   3,
    90,
    1,
    "MASK"
@@ -6522,7 +7026,7 @@
   [
    191,
    65,
-   4,
+   3,
    92,
    1,
    "MASK"
@@ -6537,7 +7041,7 @@
   ],
   [
    193,
-   88,
+   2,
    0,
    94,
    0,
@@ -6546,7 +7050,7 @@
   [
    194,
    65,
-   4,
+   3,
    94,
    1,
    "MASK"
@@ -6561,7 +7065,7 @@
   ],
   [
    196,
-   94,
+   88,
    0,
    96,
    0,
@@ -6570,7 +7074,7 @@
   [
    197,
    65,
-   5,
+   3,
    96,
    1,
    "MASK"
@@ -6585,7 +7089,7 @@
   ],
   [
    199,
-   94,
+   96,
    0,
    98,
    0,
@@ -6594,7 +7098,7 @@
   [
    200,
    65,
-   5,
+   4,
    98,
    1,
    "MASK"
@@ -6609,7 +7113,7 @@
   ],
   [
    202,
-   94,
+   96,
    0,
    100,
    0,
@@ -6618,7 +7122,7 @@
   [
    203,
    65,
-   5,
+   4,
    100,
    1,
    "MASK"
@@ -6633,9 +7137,153 @@
   ],
   [
    205,
-   100,
+   2,
    0,
    102,
+   0,
+   "IMAGE"
+  ],
+  [
+   206,
+   65,
+   4,
+   102,
+   1,
+   "MASK"
+  ],
+  [
+   207,
+   102,
+   0,
+   103,
+   0,
+   "IMAGE"
+  ],
+  [
+   208,
+   96,
+   0,
+   104,
+   0,
+   "IMAGE"
+  ],
+  [
+   209,
+   65,
+   4,
+   104,
+   1,
+   "MASK"
+  ],
+  [
+   210,
+   104,
+   0,
+   105,
+   0,
+   "IMAGE"
+  ],
+  [
+   211,
+   104,
+   0,
+   106,
+   0,
+   "IMAGE"
+  ],
+  [
+   212,
+   65,
+   5,
+   106,
+   1,
+   "MASK"
+  ],
+  [
+   213,
+   106,
+   0,
+   107,
+   0,
+   "IMAGE"
+  ],
+  [
+   214,
+   104,
+   0,
+   108,
+   0,
+   "IMAGE"
+  ],
+  [
+   215,
+   65,
+   5,
+   108,
+   1,
+   "MASK"
+  ],
+  [
+   216,
+   108,
+   0,
+   109,
+   0,
+   "IMAGE"
+  ],
+  [
+   217,
+   2,
+   0,
+   110,
+   0,
+   "IMAGE"
+  ],
+  [
+   218,
+   65,
+   5,
+   110,
+   1,
+   "MASK"
+  ],
+  [
+   219,
+   110,
+   0,
+   111,
+   0,
+   "IMAGE"
+  ],
+  [
+   220,
+   104,
+   0,
+   112,
+   0,
+   "IMAGE"
+  ],
+  [
+   221,
+   65,
+   5,
+   112,
+   1,
+   "MASK"
+  ],
+  [
+   222,
+   112,
+   0,
+   113,
+   0,
+   "IMAGE"
+  ],
+  [
+   223,
+   112,
+   0,
+   114,
    0,
    "IMAGE"
   ]

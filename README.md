@@ -90,6 +90,13 @@ D:\ComfyUI\python_embeded\python.exe -m pip install -r D:\ComfyUI\ComfyUI\custom
 在 5 張風格完全不同的測試圖（設定視窗、商城、低對比紅絲絨結算板、遊戲主選單、中秋場景）上，
 對 118 個人工標註元件的抓取率是 98.3%，單張最低 95%。
 
+每層會輸出兩份透明 PNG：
+
+- `asset`：把下層元件移除後才切下的**乾淨容器**。按鈕、卡片、面板要用這份，裡面不會殘留文字。
+- `flat`：直接從原圖切下的**原樣**。整段文字、logo、角色要用這份，不會被下層的移除弄糊。
+
+座標寫在同層的 `asset_coords.json` / `flat_coords.json`。
+
 ### V4 四階段分層（舊版）
 
 `example_workflows/SAM3_2_Auto_Layered_UI_Extraction_V4.json`
