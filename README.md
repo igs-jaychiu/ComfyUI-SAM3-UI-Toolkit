@@ -48,6 +48,16 @@ D:\ComfyUI\python_embeded\python.exe -m pip install -r D:\ComfyUI\ComfyUI\custom
 - `gradient`：適合平滑面板或按鈕移除後的背景。
 - 遮罩以外的 tensor 像素會原值保留。
 
+### 全自動節點（V4）
+
+- **Auto Filter SAM3 Masks**：把 SAM3 individual masks 自動整理成「每個 UI 元件一張遮罩」。
+  去重（IoU）、丟掉其實是容器的遮罩（`exclude_masks_*` 接入按鈕／緞帶遮罩）、丟掉被整行包含的單字碎片、
+  `row_merge` 把同一行文字碎片接回、`close_holes` 補遮罩內洞。不需要人工填 `exclude_indices`。
+- **Concat SAM3 Mask Batches**：把多個提示詞的遮罩批次接成一批，再交給 Auto Filter。
+- **Crop SAM3 Masks To RGBA Sprites**：每張遮罩切成透明 PNG，並把座標寫到 `output/<prefix>_coords.json`。
+- **Deterministic UI Inpaint** 新增 `interp` 方法（預設）：邊緣感知線性插值＋內部平滑，
+  `grow` / `shadow_reach` 讓反鋸齒邊與軟陰影一起被移除；`bg_std_max` / `max_expand` 防止吃到框線或按鈕光澤。
+
 ### 其他節點
 
 - Crop SAM3 Batch To Objects
@@ -60,6 +70,17 @@ D:\ComfyUI\python_embeded\python.exe -m pip install -r D:\ComfyUI\ComfyUI\custom
 並提供 `INPAINT_MODEL`。V3 確定性 workflow 不需要 MAT。
 
 ## 範例 Workflow
+
+### V4 全自動分層（建議）
+
+`example_workflows/SAM3_2_Auto_Layered_UI_Extraction_V4.json`
+
+無人工核准。所有 SAM3 偵測在原圖上平行執行，再依層次順序處理：
+文字 → 物件 icon → 緞帶／按鈕 → 欄位卡片 → 主面板，每層先切出透明資產，再用確定性補洞把該層從畫布移除。
+輸出在 `output/sam3_auto_v4/<stage>/`：`preview`（編號檢查圖）、`asset`（透明 PNG）、`asset_coords.json`（座標）、
+`filled`（該層移除後的畫布），最後 `06_background/final` 是乾淨背景。換圖時只需改各階段提示詞與數量。
+
+### V3 人工核准（舊版）
 
 `example_workflows/SAM3_1_Four_Stage_UI_Extraction_V3_Deterministic.json`
 

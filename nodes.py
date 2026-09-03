@@ -1,5 +1,36 @@
+import json
+import os
+
 import torch
 import torch.nn.functional as F
+
+from . import auto_filter
+
+
+def _masks_to_bool_list(masks, size=None):
+    """MASK tensor (B,H,W) -> list of bool numpy arrays, resized to `size` (H,W) if given."""
+    if masks.ndim == 2:
+        masks = masks.unsqueeze(0)
+    if size is not None and masks.shape[-2:] != tuple(size):
+        masks = F.interpolate(masks.unsqueeze(1), size=tuple(size), mode="nearest").squeeze(1)
+    return [m >= 0.5 for m in masks.detach().cpu().numpy()]
+
+
+def _bool_list_to_masks(bool_masks, like, size):
+    import numpy as np
+
+    if not bool_masks:
+        return torch.zeros((1, size[0], size[1]), dtype=like.dtype, device=like.device)
+    stacked = np.stack(bool_masks).astype("float32")
+    return torch.from_numpy(stacked).to(dtype=like.dtype, device=like.device)
+
+
+def _image_to_uint8(image):
+    """First image of an IMAGE tensor -> uint8 RGB numpy."""
+    if image.ndim == 3:
+        image = image.unsqueeze(0)
+    rgb = image[0, ..., :3].detach().cpu().clamp(0.0, 1.0).numpy() * 255.0
+    return rgb.round().astype("uint8")
 
 
 def _pad_to_square(image, mask):
@@ -420,8 +451,103 @@ class SAM3ApprovalGate:
         return (image, asset_masks, fill_masks)
 
 
-class SAM3DeterministicInpaint:
-    """Remove masked UI content without diffusion or generative hallucinations."""
+class SAM3MaskBatchConcat:
+    """Concatenate up to four MASK batches (e.g. several SAM3 prompts) into one batch."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {"masks_1": ("MASK",)},
+            "optional": {
+                "masks_2": ("MASK",),
+                "masks_3": ("MASK",),
+                "masks_4": ("MASK",),
+            },
+        }
+
+    RETURN_TYPES = ("MASK",)
+    RETURN_NAMES = ("MASKS",)
+    FUNCTION = "concat"
+    CATEGORY = "image/mask"
+
+    def concat(self, masks_1, masks_2=None, masks_3=None, masks_4=None):
+        batches = []
+        for masks in (masks_1, masks_2, masks_3, masks_4):
+            if masks is None:
+                continue
+            if masks.ndim == 2:
+                masks = masks.unsqueeze(0)
+            if batches and masks.shape[-2:] != batches[0].shape[-2:]:
+                masks = F.interpolate(
+                    masks.unsqueeze(1), size=batches[0].shape[-2:], mode="nearest"
+                ).squeeze(1)
+            batches.append(masks.to(batches[0].device) if batches else masks)
+        return (torch.cat(batches, dim=0),)
+
+
+class SAM3AutoFilterMasks:
+    """Turn a raw SAM3 individual-mask batch into one clean mask per UI element, no manual review.
+
+    Removes duplicates, masks that are really an excluded reference element (a text prompt that
+    returned a whole button), fragments inside a larger kept mask (single glyphs), and optionally
+    re-assembles text rows and closes holes.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "masks": ("MASK",),
+                "dedupe_iou": ("FLOAT", {"default": 0.85, "min": 0.5, "max": 1.0, "step": 0.01}),
+                "drop_contained": ("BOOLEAN", {"default": True}),
+                "contain_ratio": ("FLOAT", {"default": 0.85, "min": 0.5, "max": 1.0, "step": 0.01}),
+                "min_area": ("INT", {"default": 30, "min": 1, "max": 100000, "step": 1}),
+                "max_area_frac": ("FLOAT", {"default": 0.5, "min": 0.01, "max": 1.0, "step": 0.01}),
+                "min_fill": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "exclude_overlap": ("FLOAT", {"default": 0.5, "min": 0.1, "max": 1.0, "step": 0.01}),
+                "row_merge": ("BOOLEAN", {"default": False}),
+                "merge_gap_ratio": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 5.0, "step": 0.1}),
+                "split_gap_ratio": ("FLOAT", {"default": 1.5, "min": 0.5, "max": 10.0, "step": 0.1}),
+                "close_holes": ("BOOLEAN", {"default": False}),
+            },
+            "optional": {
+                "exclude_masks_1": ("MASK",),
+                "exclude_masks_2": ("MASK",),
+                "exclude_masks_3": ("MASK",),
+            },
+        }
+
+    RETURN_TYPES = ("MASK", "INT", "STRING")
+    RETURN_NAMES = ("FILTERED_MASKS", "COUNT", "SUMMARY")
+    FUNCTION = "filter"
+    CATEGORY = "image/detection"
+
+    def filter(self, masks, dedupe_iou=0.85, drop_contained=True, contain_ratio=0.85, min_area=30,
+               max_area_frac=0.5, min_fill=0.0, exclude_overlap=0.5, row_merge=False,
+               merge_gap_ratio=1.0, split_gap_ratio=1.5, close_holes=False,
+               exclude_masks_1=None, exclude_masks_2=None, exclude_masks_3=None):
+        if masks.ndim == 2:
+            masks = masks.unsqueeze(0)
+        size = masks.shape[-2:]
+        raw = _masks_to_bool_list(masks)
+        exclude = []
+        for ref in (exclude_masks_1, exclude_masks_2, exclude_masks_3):
+            if ref is not None:
+                exclude.extend(_masks_to_bool_list(ref, size))
+        kept, summary = auto_filter.filter_masks(
+            raw, exclude=exclude, dedupe_iou=float(dedupe_iou), drop_contained=bool(drop_contained),
+            contain_ratio=float(contain_ratio), min_area=int(min_area), max_area_frac=float(max_area_frac),
+            min_fill=float(min_fill), exclude_overlap=float(exclude_overlap), row_merge=bool(row_merge),
+            merge_gap_ratio=float(merge_gap_ratio), split_gap_ratio=float(split_gap_ratio),
+            close_holes=bool(close_holes),
+        )
+        if not kept:
+            raise ValueError(f"SAM3AutoFilterMasks kept no masks ({summary}). Loosen the filters or the prompt.")
+        return (_bool_list_to_masks(kept, masks, size), len(kept), summary)
+
+
+class SAM3CropToRGBA:
+    """Cut every mask out of the image as a transparent RGBA sprite and record its coordinates."""
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -429,7 +555,76 @@ class SAM3DeterministicInpaint:
             "required": {
                 "image": ("IMAGE",),
                 "masks": ("MASK",),
-                "method": (["telea", "navier_stokes", "gradient"],),
+                "padding": ("INT", {"default": 2, "min": 0, "max": 256, "step": 1}),
+                "feather": ("INT", {"default": 1, "min": 0, "max": 16, "step": 1}),
+                "coords_prefix": ("STRING", {"default": "", "multiline": False}),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE", "STRING")
+    RETURN_NAMES = ("RGBA_IMAGES", "COORDS_JSON")
+    OUTPUT_IS_LIST = (True, False)
+    FUNCTION = "crop"
+    CATEGORY = "image/crop"
+
+    def crop(self, image, masks, padding=2, feather=1, coords_prefix=""):
+        import cv2
+        import numpy as np
+
+        if image.ndim == 3:
+            image = image.unsqueeze(0)
+        height, width = image.shape[1:3]
+        rgb = _image_to_uint8(image)
+        bool_masks = _masks_to_bool_list(masks, (height, width))
+        images = []
+        coords = []
+        for index, mask in enumerate(bool_masks, 1):
+            box = auto_filter.bbox(mask)
+            if box is None:
+                continue
+            x1, y1, x2, y2 = box
+            x1 = max(0, x1 - padding)
+            y1 = max(0, y1 - padding)
+            x2 = min(width, x2 + padding)
+            y2 = min(height, y2 + padding)
+            alpha = (mask[y1:y2, x1:x2] * 255).astype(np.uint8)
+            if feather > 0:
+                alpha = cv2.GaussianBlur(alpha, (2 * feather + 1, 2 * feather + 1), 0)
+            rgba = np.dstack([rgb[y1:y2, x1:x2], alpha]).astype(np.float32) / 255.0
+            images.append(torch.from_numpy(rgba).to(dtype=image.dtype, device=image.device).unsqueeze(0))
+            coords.append({"index": index, "x": x1, "y": y1, "w": x2 - x1, "h": y2 - y1})
+        if not images:
+            raise ValueError("SAM3CropToRGBA: no non-empty masks to crop")
+        payload = json.dumps(coords, indent=1)
+        if coords_prefix.strip():
+            try:
+                import folder_paths
+
+                out_dir = folder_paths.get_output_directory()
+                target = os.path.join(out_dir, coords_prefix.strip() + "_coords.json")
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                with open(target, "w", encoding="utf-8") as handle:
+                    handle.write(payload)
+            except Exception as error:  # noqa: BLE001 - never fail the crop because of bookkeeping
+                print(f"[SAM3CropToRGBA] could not write coords file: {error}")
+        return (images, payload)
+
+
+class SAM3DeterministicInpaint:
+    """Remove masked UI content without diffusion or generative hallucinations.
+
+    `interp` (recommended) fills each hole by edge-aware linear interpolation from its
+    surroundings and smooths the interior; `grow` / `shadow_reach` enlarge the fill mask so that
+    anti-aliased edges and soft drop shadows disappear together with the element.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "masks": ("MASK",),
+                "method": (["interp", "telea", "navier_stokes", "gradient"],),
                 "radius": (
                     "INT",
                     {"default": 5, "min": 1, "max": 64, "step": 1},
@@ -438,7 +633,17 @@ class SAM3DeterministicInpaint:
                     "INT",
                     {"default": 20, "min": 2, "max": 128, "step": 1},
                 ),
-            }
+            },
+            "optional": {
+                "grow": ("INT", {"default": 0, "min": 0, "max": 64, "step": 1}),
+                "shadow_reach": ("INT", {"default": 0, "min": 0, "max": 128, "step": 1}),
+                "shadow_thresh": ("FLOAT", {"default": 14.0, "min": 1.0, "max": 128.0, "step": 0.5}),
+                "bg_std_max": ("FLOAT", {"default": 30.0, "min": 1.0, "max": 128.0, "step": 0.5}),
+                "max_expand": ("FLOAT", {"default": 0.6, "min": 0.0, "max": 5.0, "step": 0.05}),
+                "sim_scale": ("FLOAT", {"default": 12.0, "min": 1.0, "max": 128.0, "step": 0.5}),
+                "blur_scale": ("FLOAT", {"default": 0.25, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "blur_max": ("INT", {"default": 41, "min": 3, "max": 255, "step": 2}),
+            },
         }
 
     RETURN_TYPES = ("IMAGE",)
@@ -487,7 +692,9 @@ class SAM3DeterministicInpaint:
                 result[cy, cx, channel] = component_design @ coefficients
         return np.clip(result, 0, 255).astype(np.uint8)
 
-    def inpaint(self, image, masks, method="telea", radius=5, gradient_ring=20):
+    def inpaint(self, image, masks, method="interp", radius=5, gradient_ring=20, grow=0,
+                shadow_reach=0, shadow_thresh=14.0, bg_std_max=30.0, max_expand=0.6,
+                sim_scale=12.0, blur_scale=0.25, blur_max=41):
         import cv2
         import numpy as np
 
@@ -495,31 +702,44 @@ class SAM3DeterministicInpaint:
             image = image.unsqueeze(0)
         if masks.ndim == 2:
             masks = masks.unsqueeze(0)
-        if masks.shape[-2:] != image.shape[1:3]:
-            masks = F.interpolate(
-                masks.unsqueeze(1),
-                size=image.shape[1:3],
-                mode="nearest",
-            ).squeeze(1)
+        size = tuple(image.shape[1:3])
+        bool_masks = _masks_to_bool_list(masks, size)
 
-        union = (torch.amax(masks, dim=0) >= 0.5)
-        mask_np = (union.detach().cpu().numpy().astype(np.uint8) * 255)
         outputs = []
         for source in image[..., :3]:
             rgb = (
                 source.detach().cpu().clamp(0.0, 1.0).numpy() * 255.0
             ).round().astype(np.uint8)
+            fill = np.zeros(size, dtype=bool)
+            for mask in bool_masks:
+                if not mask.any():
+                    continue
+                if int(grow) > 0 or int(shadow_reach) > 0:
+                    fill |= auto_filter.shadow_grow(
+                        rgb, mask, reach=int(shadow_reach), thresh=float(shadow_thresh),
+                        base=int(grow), bg_std_max=float(bg_std_max), max_expand=float(max_expand),
+                    )
+                else:
+                    fill |= mask
+            if not fill.any():
+                outputs.append(source)
+                continue
             if method == "gradient":
-                filled = self._gradient_fill(rgb, mask_np, int(gradient_ring))
+                filled = self._gradient_fill(rgb, (fill.astype(np.uint8) * 255), int(gradient_ring))
+            elif method == "interp":
+                filled = auto_filter.inpaint_interp(
+                    rgb, fill, True, float(blur_scale), float(sim_scale), int(blur_max)
+                )
             else:
                 flag = cv2.INPAINT_TELEA if method == "telea" else cv2.INPAINT_NS
-                filled = cv2.inpaint(rgb, mask_np, float(radius), flag)
+                filled = cv2.inpaint(rgb, (fill.astype(np.uint8) * 255), float(radius), flag)
             generated = torch.from_numpy(filled.astype(np.float32) / 255.0).to(
                 dtype=image.dtype, device=image.device
             )
+            union = torch.from_numpy(fill).to(device=image.device)
             # Composite in torch so non-mask pixels retain the original tensor
             # values exactly instead of passing through uint8 quantization.
-            outputs.append(torch.where(union.to(image.device).unsqueeze(-1), generated, source))
+            outputs.append(torch.where(union.unsqueeze(-1), generated, source))
         return (torch.stack(outputs),)
 
 
@@ -531,8 +751,14 @@ NODE_CLASS_MAPPINGS = {
     "SAM3MaskReview": SAM3MaskReview,
     "SAM3ApprovalGate": SAM3ApprovalGate,
     "SAM3DeterministicInpaint": SAM3DeterministicInpaint,
+    "SAM3MaskBatchConcat": SAM3MaskBatchConcat,
+    "SAM3AutoFilterMasks": SAM3AutoFilterMasks,
+    "SAM3CropToRGBA": SAM3CropToRGBA,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
+    "SAM3MaskBatchConcat": "Concat SAM3 Mask Batches",
+    "SAM3AutoFilterMasks": "Auto Filter SAM3 Masks",
+    "SAM3CropToRGBA": "Crop SAM3 Masks To RGBA Sprites",
     "SAM3BatchCropToObjects": "Crop SAM3 Batch To Objects",
     "SAM3MergeMaskBatch": "Merge SAM3 Mask Batch",
     "SAM3SelectionOverlay": "Overlay SAM3 Selection",
