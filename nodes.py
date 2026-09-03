@@ -811,12 +811,13 @@ class SAM3CropToRGBA:
                 "matte": (["difference", "off"],),
                 "matte_low": ("FLOAT", {"default": 0.10, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "matte_high": ("FLOAT", {"default": 0.35, "min": 0.01, "max": 1.0, "step": 0.01}),
-                "matte_min_coverage": ("FLOAT", {"default": 0.40, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "matte_tight_edge": ("FLOAT", {"default": 0.90, "min": 0.0, "max": 5.0, "step": 0.05}),
                 "align_siblings": ("BOOLEAN", {"default": True}),
                 "align_tolerance": ("FLOAT", {"default": 0.12, "min": 0.0, "max": 0.5, "step": 0.01}),
             },
+            # kept optional so a graph saved before these existed still validates
             "optional": {
+                "matte_min_coverage": ("FLOAT", {"default": 0.40, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "matte_tight_edge": ("FLOAT", {"default": 0.90, "min": 0.0, "max": 5.0, "step": 0.05}),
                 "meta_json": ("STRING", {"forceInput": True}),
             },
         }
