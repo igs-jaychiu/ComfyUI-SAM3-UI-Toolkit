@@ -58,6 +58,16 @@ D:\ComfyUI\python_embeded\python.exe -m pip install -r D:\ComfyUI\ComfyUI\custom
 - **Deterministic UI Inpaint** 新增 `interp` 方法（預設）：邊緣感知線性插值＋內部平滑，
   `grow` / `shadow_reach` 讓反鋸齒邊與軟陰影一起被移除；`bg_std_max` / `max_expand` 防止吃到框線或按鈕光澤。
 
+### 通用自動分層節點（V5）
+
+- **Auto Layer SAM3 Masks (z-order)**：把多個提示詞的遮罩倒進同一個池子，依**包含關係**自動排出
+  z-order 層級。葉節點（文字／圖示／道具）是 LAYER_1，承載它們的按鈕與緞帶是 LAYER_2，
+  再往上是卡片、面板、外框。分層依據是幾何包含，不是哪個提示詞找到的，所以換圖不用改參數。
+  `min_votes` 是共識門檻：同一個元件要有幾個提示詞同時找到才算數，預設 2 可濾掉單一提示詞的幻覺；
+  調成 3 會更乾淨但漏抓變多，調成 1 最完整但雜訊最多。
+- **Concat SAM3 Mask Batches** 擴充到 8 個輸入，並輸出 `LABELS_JSON`，讓每張遮罩帶著來源提示詞名稱
+  一路傳到資產命名。
+
 ### 其他節點
 
 - Crop SAM3 Batch To Objects
@@ -71,7 +81,16 @@ D:\ComfyUI\python_embeded\python.exe -m pip install -r D:\ComfyUI\ComfyUI\custom
 
 ## 範例 Workflow
 
-### V4 全自動分層（建議）
+### V5 通用自動分層（建議）
+
+`example_workflows/SAM3_3_Generic_Auto_Layer_V5.json`
+
+同一套流程適用任何 UI 或場景圖，不需要針對圖片改提示詞。28 個通用提示詞全部在原圖上跑，
+遮罩池交給 Auto Layer 自動分層，每層依序切出透明資產再確定性補洞。
+在 5 張風格完全不同的測試圖（設定視窗、商城、低對比紅絲絨結算板、遊戲主選單、中秋場景）上，
+對 118 個人工標註元件的抓取率是 98.3%，單張最低 95%。
+
+### V4 四階段分層（舊版）
 
 `example_workflows/SAM3_2_Auto_Layered_UI_Extraction_V4.json`
 

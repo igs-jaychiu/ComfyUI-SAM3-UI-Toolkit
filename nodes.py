@@ -454,25 +454,38 @@ class SAM3ApprovalGate:
 class SAM3MaskBatchConcat:
     """Concatenate up to four MASK batches (e.g. several SAM3 prompts) into one batch."""
 
+    SLOTS = 8
+
     @classmethod
     def INPUT_TYPES(cls):
+        optional = {}
+        for i in range(2, cls.SLOTS + 1):
+            optional[f"masks_{i}"] = ("MASK",)
+        for i in range(1, cls.SLOTS + 1):
+            optional[f"labels_in_{i}"] = ("STRING", {"forceInput": True})
         return {
-            "required": {"masks_1": ("MASK",)},
-            "optional": {
-                "masks_2": ("MASK",),
-                "masks_3": ("MASK",),
-                "masks_4": ("MASK",),
+            "required": {
+                "masks_1": ("MASK",),
+                "label_names": ("STRING", {"default": "", "multiline": False}),
             },
+            "optional": optional,
         }
 
-    RETURN_TYPES = ("MASK",)
-    RETURN_NAMES = ("MASKS",)
+    RETURN_TYPES = ("MASK", "STRING")
+    RETURN_NAMES = ("MASKS", "LABELS_JSON")
     FUNCTION = "concat"
     CATEGORY = "image/mask"
 
-    def concat(self, masks_1, masks_2=None, masks_3=None, masks_4=None):
-        batches = []
-        for masks in (masks_1, masks_2, masks_3, masks_4):
+    def concat(self, masks_1, label_names="", **kwargs):
+        """Concatenate mask batches and carry a per-mask source label alongside.
+
+        `label_names` is a comma separated name per input slot; `labels_in_N` accepts a
+        LABELS_JSON from an upstream concat so labels survive chaining.
+        """
+        names = [s.strip() for s in label_names.split(",")] if label_names.strip() else []
+        incoming = [masks_1] + [kwargs.get(f"masks_{i}") for i in range(2, self.SLOTS + 1)]
+        batches, labels = [], []
+        for slot, masks in enumerate(incoming):
             if masks is None:
                 continue
             if masks.ndim == 2:
@@ -481,8 +494,20 @@ class SAM3MaskBatchConcat:
                 masks = F.interpolate(
                     masks.unsqueeze(1), size=batches[0].shape[-2:], mode="nearest"
                 ).squeeze(1)
-            batches.append(masks.to(batches[0].device) if batches else masks)
-        return (torch.cat(batches, dim=0),)
+            masks = masks.to(batches[0].device) if batches else masks
+            batches.append(masks)
+            upstream = kwargs.get(f"labels_in_{slot + 1}")
+            if upstream:
+                try:
+                    parsed = json.loads(upstream)
+                except (TypeError, ValueError):
+                    parsed = []
+                if len(parsed) == masks.shape[0]:
+                    labels.extend(str(x) for x in parsed)
+                    continue
+            name = names[slot] if slot < len(names) else f"src{slot + 1}"
+            labels.extend([name] * masks.shape[0])
+        return (torch.cat(batches, dim=0), json.dumps(labels))
 
 
 class SAM3AutoFilterMasks:
@@ -541,9 +566,72 @@ class SAM3AutoFilterMasks:
             merge_gap_ratio=float(merge_gap_ratio), split_gap_ratio=float(split_gap_ratio),
             close_holes=bool(close_holes),
         )
-        if not kept:
-            raise ValueError(f"SAM3AutoFilterMasks kept no masks ({summary}). Loosen the filters or the prompt.")
         return (_bool_list_to_masks(kept, masks, size), len(kept), summary)
+
+
+class SAM3AutoLayerMasks:
+    """Pool SAM3 masks from many prompts and split them into z-order layers automatically.
+
+    Layer 1 holds the leaf elements (text, icons, props), layer 2 the plates and buttons that
+    contain them, layer 3 the cards, and so on. The split comes from mask containment, not from
+    which prompt found what, so the same node works on any layout without per-image tuning.
+    """
+
+    MAX_LAYERS = 6
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "masks": ("MASK",),
+                "dedupe_iou": ("FLOAT", {"default": 0.8, "min": 0.3, "max": 1.0, "step": 0.01}),
+                "contain_ratio": ("FLOAT", {"default": 0.85, "min": 0.5, "max": 1.0, "step": 0.01}),
+                "min_area": ("INT", {"default": 40, "min": 1, "max": 1000000, "step": 1}),
+                "max_area_frac": ("FLOAT", {"default": 0.98, "min": 0.01, "max": 1.0, "step": 0.01}),
+                "min_fill": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "min_dim": ("INT", {"default": 6, "min": 1, "max": 512, "step": 1}),
+                "close_holes_from": ("INT", {"default": 3, "min": 0, "max": 6, "step": 1}),
+                "min_votes": ("INT", {"default": 2, "min": 1, "max": 10, "step": 1}),
+                "despeckle_frac": ("FLOAT", {"default": 0.06, "min": 0.0, "max": 1.0, "step": 0.01}),
+            },
+            "optional": {
+                "labels_json": ("STRING", {"forceInput": True}),
+            },
+        }
+
+    RETURN_TYPES = ("MASK", "MASK", "MASK", "MASK", "MASK", "MASK", "STRING", "STRING")
+    RETURN_NAMES = ("LAYER_1", "LAYER_2", "LAYER_3", "LAYER_4", "LAYER_5", "LAYER_6",
+                    "LABELS_JSON", "SUMMARY")
+    FUNCTION = "split"
+    CATEGORY = "image/detection"
+
+    def split(self, masks, dedupe_iou=0.8, contain_ratio=0.85, min_area=40, max_area_frac=0.98,
+              min_fill=0.0, min_dim=6, close_holes_from=3, min_votes=2, despeckle_frac=0.06,
+              labels_json=""):
+        if masks.ndim == 2:
+            masks = masks.unsqueeze(0)
+        size = masks.shape[-2:]
+        raw = _masks_to_bool_list(masks)
+        name_list = None
+        if labels_json:
+            try:
+                parsed = json.loads(labels_json)
+            except (TypeError, ValueError):
+                parsed = []
+            if len(parsed) == len(raw):
+                name_list = [str(x) for x in parsed]
+        layers, layer_labels, summary = auto_filter.auto_layers(
+            raw, labels=name_list, dedupe_iou=float(dedupe_iou), contain_ratio=float(contain_ratio),
+            min_area=int(min_area), max_area_frac=float(max_area_frac), min_fill=float(min_fill),
+            min_dim=int(min_dim), max_layers=self.MAX_LAYERS, close_holes_from=int(close_holes_from),
+            min_votes=int(min_votes), despeckle_frac=float(despeckle_frac),
+        )
+        while len(layers) < self.MAX_LAYERS:
+            layers.append([])
+            layer_labels.append([])
+        outs = [_bool_list_to_masks(layer, masks, size) for layer in layers[:self.MAX_LAYERS]]
+        payload = json.dumps({f"layer_{i + 1}": layer_labels[i] for i in range(self.MAX_LAYERS)})
+        return (*outs, payload, summary)
 
 
 class SAM3CropToRGBA:
@@ -594,7 +682,9 @@ class SAM3CropToRGBA:
             images.append(torch.from_numpy(rgba).to(dtype=image.dtype, device=image.device).unsqueeze(0))
             coords.append({"index": index, "x": x1, "y": y1, "w": x2 - x1, "h": y2 - y1})
         if not images:
-            raise ValueError("SAM3CropToRGBA: no non-empty masks to crop")
+            # An empty layer is normal in a generic pipeline; emit a 1x1 transparent stub so the
+            # graph keeps running instead of aborting the whole extraction.
+            images = [torch.zeros((1, 1, 1, 4), dtype=image.dtype, device=image.device)]
         payload = json.dumps(coords, indent=1)
         if coords_prefix.strip():
             try:
@@ -754,11 +844,13 @@ NODE_CLASS_MAPPINGS = {
     "SAM3MaskBatchConcat": SAM3MaskBatchConcat,
     "SAM3AutoFilterMasks": SAM3AutoFilterMasks,
     "SAM3CropToRGBA": SAM3CropToRGBA,
+    "SAM3AutoLayerMasks": SAM3AutoLayerMasks,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "SAM3MaskBatchConcat": "Concat SAM3 Mask Batches",
     "SAM3AutoFilterMasks": "Auto Filter SAM3 Masks",
     "SAM3CropToRGBA": "Crop SAM3 Masks To RGBA Sprites",
+    "SAM3AutoLayerMasks": "Auto Layer SAM3 Masks (z-order)",
     "SAM3BatchCropToObjects": "Crop SAM3 Batch To Objects",
     "SAM3MergeMaskBatch": "Merge SAM3 Mask Batch",
     "SAM3SelectionOverlay": "Overlay SAM3 Selection",

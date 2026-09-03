@@ -41,6 +41,31 @@ def fill_holes(mask):
     return mask | holes
 
 
+
+def despeckle(mask, keep_frac=0.06, max_components=0):
+    """Drop tiny disconnected specks so the mask's bounding box reflects the real object.
+
+    SAM3 sometimes returns a clean object plus a handful of stray pixels far away; the stray
+    pixels blow up the bbox and make an element look like a much larger region.
+    """
+    u = mask.astype(np.uint8)
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(u, connectivity=8)
+    if n <= 2:
+        return mask
+    areas = stats[1:, cv2.CC_STAT_AREA]
+    biggest = int(areas.max())
+    order = np.argsort(-areas)
+    keep = []
+    for rank, ci in enumerate(order):
+        if areas[ci] < keep_frac * biggest:
+            break
+        if max_components and rank >= max_components:
+            break
+        keep.append(ci + 1)
+    if not keep:
+        return mask
+    return np.isin(labels, keep)
+
 def grow(mask, pixels):
     if pixels <= 0:
         return mask
@@ -317,3 +342,269 @@ def inpaint(image, fill_mask, method="interp", radius=5, gradient_ring=20,
         return inpaint_interp(image, fill_mask, True, blur_scale, sim_scale, int(blur_max))
     flag = cv2.INPAINT_TELEA if method == "telea" else cv2.INPAINT_NS
     return cv2.inpaint(image, (fill_mask * 255).astype(np.uint8), float(radius), flag)
+
+
+# --------------------------------------------------------------------------- automatic layering
+
+def _mask_from_rle(entry):
+    return entry
+
+
+def box_iou(a, b):
+    ix1, iy1 = max(a[0], b[0]), max(a[1], b[1])
+    ix2, iy2 = min(a[2], b[2]), min(a[3], b[3])
+    iw, ih = max(0, ix2 - ix1), max(0, iy2 - iy1)
+    inter = iw * ih
+    ua = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / ua if ua > 0 else 0.0
+
+
+def _crop_iou(ma, ba, aa, mb, bb, ab):
+    """Pixel IoU computed only over the overlapping bbox window."""
+    ix1, iy1 = max(ba[0], bb[0]), max(ba[1], bb[1])
+    ix2, iy2 = min(ba[2], bb[2]), min(ba[3], bb[3])
+    if ix2 <= ix1 or iy2 <= iy1:
+        return 0.0
+    inter = int(np.logical_and(ma[iy1:iy2, ix1:ix2], mb[iy1:iy2, ix1:ix2]).sum())
+    union = aa + ab - inter
+    return inter / union if union else 0.0
+
+
+def _crop_inter(ma, ba, mb, bb):
+    ix1, iy1 = max(ba[0], bb[0]), max(ba[1], bb[1])
+    ix2, iy2 = min(ba[2], bb[2]), min(ba[3], bb[3])
+    if ix2 <= ix1 or iy2 <= iy1:
+        return 0
+    return int(np.logical_and(ma[iy1:iy2, ix1:ix2], mb[iy1:iy2, ix1:ix2]).sum())
+
+
+def dedupe_indexed(masks, threshold):
+    """IoU dedupe that keeps track of which inputs were merged into each survivor.
+
+    Bounding boxes pre-filter the pixel comparison, and the pixel AND runs only on the
+    overlapping window, so this stays fast on large canvases with hundreds of masks.
+
+    Returns (kept_masks, groups) where groups[i] is the list of input indices folded into kept[i].
+    """
+    areas = [int(m.sum()) for m in masks]
+    boxes = [bbox(m) for m in masks]
+    order = sorted(range(len(masks)), key=lambda i: -areas[i])
+    kept, groups, kboxes, kareas = [], [], [], []
+    for i in order:
+        ba, aa = boxes[i], areas[i]
+        if ba is None:
+            continue
+        hit = -1
+        for k in range(len(kept)):
+            # box IoU is an upper bound on pixel IoU, so it can reject cheaply
+            if box_iou(ba, kboxes[k]) <= threshold:
+                continue
+            if _crop_iou(masks[i], ba, aa, kept[k], kboxes[k], kareas[k]) > threshold:
+                hit = k
+                break
+        if hit >= 0:
+            groups[hit].append(i)
+        else:
+            kept.append(masks[i])
+            groups.append([i])
+            kboxes.append(ba)
+            kareas.append(aa)
+    return kept, groups
+
+
+def contains(small, big, ratio=0.85):
+    """True when `small` sits inside `big` (most of small's area overlaps big, and big is larger)."""
+    a = small.sum()
+    if a == 0:
+        return False
+    if big.sum() <= a * 1.02:
+        return False
+    return np.logical_and(small, big).sum() / a > ratio
+
+
+def layer_heights(masks, contain_ratio=0.85):
+    """Assign each mask a height: leaves = 1, a mask containing height-h children = h+1.
+
+    This is a z-order that generalises across layouts: text/icons/props come out at height 1,
+    the plates and buttons that hold them at 2, the cards at 3, the window at 4 - without any
+    per-image prompt bookkeeping.
+    """
+    n = len(masks)
+    if n == 0:
+        return []
+    areas = [int(m.sum()) for m in masks]
+    boxes = [bbox(m) for m in masks]
+    inside = [[] for _ in range(n)]          # inside[p] = children of p
+    order = sorted(range(n), key=lambda i: areas[i])
+    for ci in range(n):
+        bc, ac = boxes[ci], areas[ci]
+        if bc is None or ac == 0:
+            continue
+        for pi in range(n):
+            if ci == pi or areas[pi] <= ac * 1.02:
+                continue
+            bp = boxes[pi]
+            if bp is None:
+                continue
+            # cheap reject: how much of ci's box can possibly fall inside pi's box
+            ix1, iy1 = max(bc[0], bp[0]), max(bc[1], bp[1])
+            ix2, iy2 = min(bc[2], bp[2]), min(bc[3], bp[3])
+            if ix2 <= ix1 or iy2 <= iy1:
+                continue
+            if (ix2 - ix1) * (iy2 - iy1) < contain_ratio * ac:
+                continue
+            if _crop_inter(masks[ci], bc, masks[pi], bp) / ac > contain_ratio:
+                inside[pi].append(ci)
+    height = [0] * n
+    for i in order:  # ascending area guarantees children resolve first
+        kids = inside[i]
+        height[i] = 1 + max((height[c] for c in kids), default=0)
+    return height
+
+
+def auto_layers(masks, labels=None, dedupe_iou=0.85, contain_ratio=0.85, min_area=40,
+                max_area_frac=0.98, min_fill=0.0, min_dim=6, max_layers=6, close_holes_from=3,
+                label_priority=None, despeckle_frac=0.06, min_votes=1, straddle_lo=0.0,
+                straddle_hi=0.0, drop_same_label_children=False):
+    """Pool masks from many prompts, clean them, and split into z-order layers (leaves first).
+
+    Returns (layers, labels_per_layer, summary) where layers[k] is a list of bool masks.
+    """
+    if not masks:
+        return [], [], 'no masks'
+    height_px, width_px = masks[0].shape
+    total = height_px * width_px
+    labels = list(labels) if labels is not None else [''] * len(masks)
+
+    sized, sized_labels = [], []
+    for m, lb in zip(masks, labels):
+        if despeckle_frac > 0:
+            m = despeckle(m, despeckle_frac)
+        area = int(m.sum())
+        if area < min_area or area > max_area_frac * total:
+            continue
+        box = bbox(m)
+        if box is None:
+            continue
+        x1, y1, x2, y2 = box
+        if (x2 - x1) < min_dim or (y2 - y1) < min_dim:
+            continue
+        if min_fill > 0 and area / ((x2 - x1) * (y2 - y1)) < min_fill:
+            continue
+        sized.append(m)
+        sized_labels.append(lb)
+    if not sized:
+        return [], [], f'in={len(masks)} sized=0'
+
+    kept, groups = dedupe_indexed(sized, dedupe_iou)
+    prio = label_priority or []
+
+    def pick_label(idxs):
+        names = [sized_labels[i] for i in idxs if sized_labels[i]]
+        if not names:
+            return ''
+        for p in prio:
+            if p in names:
+                return p
+        return max(set(names), key=names.count)
+
+    kept_labels = [pick_label(g) for g in groups]
+    votes = [len(g) for g in groups]
+    n_dedupe = len(kept)
+
+    # --- consensus: an element that several independent prompts agree on is real; something a
+    # single prompt hallucinated usually is not.
+    if min_votes > 1:
+        sel = [i for i, v in enumerate(votes) if v >= min_votes]
+        kept = [kept[i] for i in sel]
+        kept_labels = [kept_labels[i] for i in sel]
+        votes = [votes[i] for i in sel]
+    n_votes = len(kept)
+
+    # --- straddle suppression: a mask that half-overlaps another (neither disjoint nor cleanly
+    # contained) is a bad cut across two elements; keep whichever has more prompt agreement.
+    if straddle_hi > straddle_lo > 0:
+        boxes_k = [bbox(m) for m in kept]
+        areas_k = [int(m.sum()) for m in kept]
+        drop = set()
+        for i in range(len(kept)):
+            if i in drop:
+                continue
+            for j in range(i + 1, len(kept)):
+                if j in drop:
+                    continue
+                bi, bj = boxes_k[i], boxes_k[j]
+                if bi is None or bj is None:
+                    continue
+                inter = _crop_inter(kept[i], bi, kept[j], bj)
+                if inter == 0:
+                    continue
+                fi = inter / max(1, areas_k[i])
+                fj = inter / max(1, areas_k[j])
+                small = max(fi, fj)
+                if straddle_lo < small < straddle_hi:
+                    loser = i if votes[i] < votes[j] else j
+                    if votes[i] == votes[j]:
+                        loser = i if areas_k[i] > areas_k[j] else j
+                    drop.add(loser)
+        if drop:
+            sel = [i for i in range(len(kept)) if i not in drop]
+            kept = [kept[i] for i in sel]
+            kept_labels = [kept_labels[i] for i in sel]
+            votes = [votes[i] for i in sel]
+    n_straddle = len(kept)
+
+    # --- granularity collapse: a piece contained in a bigger piece that the *same* kind of prompt
+    # found is over-segmentation (a glyph inside its word, a knob inside its slider). Text inside a
+    # button survives because the labels differ.
+    if drop_same_label_children:
+        boxes_k = [bbox(m) for m in kept]
+        areas_k = [int(m.sum()) for m in kept]
+        drop = set()
+        for ci in range(len(kept)):
+            bc, ac = boxes_k[ci], areas_k[ci]
+            if bc is None or ac == 0:
+                continue
+            for pi in range(len(kept)):
+                if ci == pi or areas_k[pi] <= ac * 1.02:
+                    continue
+                if kept_labels[ci] != kept_labels[pi] or not kept_labels[ci]:
+                    continue
+                bp = boxes_k[pi]
+                if bp is None:
+                    continue
+                ix1, iy1 = max(bc[0], bp[0]), max(bc[1], bp[1])
+                ix2, iy2 = min(bc[2], bp[2]), min(bc[3], bp[3])
+                if ix2 <= ix1 or iy2 <= iy1:
+                    continue
+                if (ix2 - ix1) * (iy2 - iy1) < contain_ratio * ac:
+                    continue
+                if _crop_inter(kept[ci], bc, kept[pi], bp) / ac > contain_ratio:
+                    drop.add(ci)
+                    break
+        if drop:
+            sel = [i for i in range(len(kept)) if i not in drop]
+            kept = [kept[i] for i in sel]
+            kept_labels = [kept_labels[i] for i in sel]
+            votes = [votes[i] for i in sel]
+    n_granular = len(kept)
+
+    heights = layer_heights(kept, contain_ratio)
+
+    layers, layer_labels = [], []
+    for h in range(1, max_layers + 1):
+        take = h if h < max_layers else None
+        if take is None:
+            sel = [i for i, v in enumerate(heights) if v >= max_layers]
+        else:
+            sel = [i for i, v in enumerate(heights) if v == h]
+        group = [kept[i] for i in sel]
+        if close_holes_from and h >= close_holes_from:
+            group = [fill_holes(m) for m in group]
+        pairs = sorted(zip(group, [kept_labels[i] for i in sel]),
+                       key=lambda t: (bbox(t[0])[1] // 24, bbox(t[0])[0]))
+        layers.append([p[0] for p in pairs])
+        layer_labels.append([p[1] for p in pairs])
+    summary = (f'in={len(masks)} sized={len(sized)} dedupe={n_dedupe} votes={n_votes} '
+               f'straddle={n_straddle} granular={n_granular} layers=' + '/'.join(str(len(l)) for l in layers))
+    return layers, layer_labels, summary

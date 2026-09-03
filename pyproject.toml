@@ -1,6 +1,6 @@
 [project]
 name = "sam3-ui-toolkit"
-version = "0.2.0"
+version = "0.3.0"
 description = "Review, filter, crop, and deterministically repair UI assets segmented by native ComfyUI SAM3 nodes."
 readme = "README.md"
 requires-python = ">=3.10"
