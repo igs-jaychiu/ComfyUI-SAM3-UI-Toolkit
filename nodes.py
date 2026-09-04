@@ -795,6 +795,148 @@ class SAM3AutoLayerMasks:
         return (*outs, payload, summary)
 
 
+class SAM3NineSlice:
+    """Work out 9-slice borders for each extracted sprite and record them.
+
+    A button exported as a flat PNG can only ever be drawn at the size it was cut. With borders
+    the engine redraws it at any width while the rounded corners and bevel stay pixel-exact.
+    Sprites that cannot be stretched - round icons, text, characters, anything that came out in
+    pieces - are reported with a reason instead of a wrong guess.
+    """
+
+    INPUT_IS_LIST = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "images": ("IMAGE",),
+                "min_center": ("INT", {"default": 6, "min": 2, "max": 256, "step": 1}),
+                "flat_frac": ("FLOAT", {"default": 0.15, "min": 0.01, "max": 1.0, "step": 0.01}),
+                "min_confidence": ("FLOAT", {"default": 0.55, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "min_opaque": ("FLOAT", {"default": 0.35, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "silhouette_tol": ("FLOAT", {"default": 0.04, "min": 0.0, "max": 0.5, "step": 0.005}),
+                "max_circularity": ("FLOAT", {"default": 0.82, "min": 0.1, "max": 1.0, "step": 0.01}),
+                "write_9png": ("BOOLEAN", {"default": False}),
+                "prefix": ("STRING", {"default": "", "multiline": False}),
+            },
+            "optional": {
+                "coords_json": ("STRING", {"forceInput": True}),
+            },
+        }
+
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("NINESLICE_JSON", "SUMMARY")
+    OUTPUT_IS_LIST = (False, False)
+    FUNCTION = "detect"
+    CATEGORY = "image/detection"
+
+    @staticmethod
+    def _first(value, default=None):
+        """INPUT_IS_LIST wraps every widget in a list; take the single value back out."""
+        if isinstance(value, list):
+            return value[0] if value else default
+        return value if value is not None else default
+
+    @staticmethod
+    def _write_nine_patch(path, rgba, borders):
+        """Android .9.png: a 1px frame where black marks the stretchable spans."""
+        import numpy as np
+
+        height, width = rgba.shape[:2]
+        out = np.zeros((height + 2, width + 2, 4), np.uint8)
+        out[1:-1, 1:-1] = rgba
+        black = np.array([0, 0, 0, 255], np.uint8)
+        left, right = borders["left"], borders["right"]
+        top, bottom = borders["top"], borders["bottom"]
+        if borders["stretch_x"]:
+            out[0, 1 + left:1 + width - right] = black          # stretch span
+            out[-1, 1 + left:1 + width - right] = black         # content span
+        if borders["stretch_y"]:
+            out[1 + top:1 + height - bottom, 0] = black
+            out[1 + top:1 + height - bottom, -1] = black
+        import cv2
+        cv2.imwrite(path, cv2.cvtColor(out, cv2.COLOR_RGBA2BGRA))
+
+    def detect(self, images, min_center=6, flat_frac=0.15, min_confidence=0.55, min_opaque=0.35,
+               silhouette_tol=0.04, max_circularity=0.82, write_9png=False, prefix="",
+               coords_json=None):
+        import numpy as np
+
+        min_center = int(self._first(min_center, 6))
+        flat_frac = float(self._first(flat_frac, 0.15))
+        min_confidence = float(self._first(min_confidence, 0.55))
+        min_opaque = float(self._first(min_opaque, 0.35))
+        silhouette_tol = float(self._first(silhouette_tol, 0.04))
+        max_circularity = float(self._first(max_circularity, 0.82))
+        write_9png = bool(self._first(write_9png, False))
+        prefix = str(self._first(prefix, "") or "").strip()
+
+        rows = []
+        raw_coords = self._first(coords_json, None)
+        if raw_coords:
+            try:
+                rows = json.loads(raw_coords)
+            except (TypeError, ValueError):
+                rows = []
+
+        if not isinstance(images, list):
+            images = [images]
+
+        out_dir = None
+        if write_9png and prefix:
+            try:
+                import folder_paths
+
+                out_dir = folder_paths.get_output_directory()
+            except Exception as error:  # noqa: BLE001 - never fail detection over bookkeeping
+                print(f"[SAM3NineSlice] cannot resolve output directory: {error}")
+
+        results = []
+        stretchable = 0
+        for index, image in enumerate(images, 1):
+            tensor = image[0] if image.ndim == 4 else image
+            array = (tensor.detach().cpu().clamp(0.0, 1.0).numpy() * 255.0).round().astype(np.uint8)
+            if array.shape[2] == 3:
+                array = np.dstack([array, np.full(array.shape[:2], 255, np.uint8)])
+            if array.shape[0] < 2 or array.shape[1] < 2:
+                continue
+            borders = auto_filter.nine_slice(
+                array, min_center=min_center, flat_frac=flat_frac,
+                min_confidence=min_confidence, min_opaque=min_opaque,
+                silhouette_tol=silhouette_tol, max_circularity=max_circularity)
+            record = {"index": index, "w": int(array.shape[1]), "h": int(array.shape[0])}
+            if index - 1 < len(rows) and isinstance(rows[index - 1], dict):
+                src = rows[index - 1]
+                for key in ("uid", "layer", "label", "x", "y"):
+                    if key in src:
+                        record[key] = src[key]
+            record.update(borders)
+            results.append(record)
+            if borders["nine_slice"]:
+                stretchable += 1
+                if out_dir:
+                    name = record.get("uid") or f"sprite_{index:03d}"
+                    target = os.path.join(out_dir, prefix + f"_{name}.9.png")
+                    try:
+                        os.makedirs(os.path.dirname(target), exist_ok=True)
+                        self._write_nine_patch(target, array, borders)
+                    except Exception as error:  # noqa: BLE001
+                        print(f"[SAM3NineSlice] could not write {target}: {error}")
+
+        payload = json.dumps(results, indent=1, ensure_ascii=False)
+        if prefix and out_dir:
+            try:
+                target = os.path.join(out_dir, prefix + "_nineslice.json")
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                with open(target, "w", encoding="utf-8") as handle:
+                    handle.write(payload)
+            except Exception as error:  # noqa: BLE001
+                print(f"[SAM3NineSlice] could not write json: {error}")
+        summary = f"{stretchable}/{len(results)} sprites are 9-sliceable"
+        return (payload, summary)
+
+
 class SAM3CropToRGBA:
     """Cut every mask out of the image as a transparent RGBA sprite and record its coordinates."""
 
@@ -1150,6 +1292,7 @@ NODE_CLASS_MAPPINGS = {
     "SAM3CropToRGBA": SAM3CropToRGBA,
     "SAM3AutoLayerMasks": SAM3AutoLayerMasks,
     "SAM3PromptBank": SAM3PromptBank,
+    "SAM3NineSlice": SAM3NineSlice,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "SAM3MaskBatchConcat": "Concat SAM3 Mask Batches",
@@ -1157,6 +1300,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "SAM3CropToRGBA": "Crop SAM3 Masks To RGBA Sprites",
     "SAM3AutoLayerMasks": "Auto Layer SAM3 Masks (z-order)",
     "SAM3PromptBank": "SAM3 Prompt Bank (run many prompts)",
+    "SAM3NineSlice": "Detect 9-Slice Borders",
     "SAM3BatchCropToObjects": "Crop SAM3 Batch To Objects",
     "SAM3MergeMaskBatch": "Merge SAM3 Mask Batch",
     "SAM3SelectionOverlay": "Overlay SAM3 Selection",

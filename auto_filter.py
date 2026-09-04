@@ -734,3 +734,178 @@ def difference_matte(image, mask, low=0.10, high=0.35, min_coverage=0.40, pad=6,
     out = np.zeros(mask.shape, np.float32)
     out[y1:y2, x1:x2] = alpha
     return out
+
+
+# --------------------------------------------------------------------------- 9-slice borders
+
+def _axis_profile(rgba, axis):
+    """Mean absolute difference between neighbouring lines along `axis`.
+
+    axis=1 walks columns (for horizontal stretching), axis=0 walks rows. Alpha is included so a
+    change in silhouette counts as a change, which is what makes a rounded corner show up.
+    """
+    plane = rgba.astype(np.float32)
+    if axis == 0:
+        a, b = plane[:-1, :, :], plane[1:, :, :]
+        return np.abs(a - b).mean(axis=(1, 2)) / 255.0
+    a, b = plane[:, :-1, :], plane[:, 1:, :]
+    return np.abs(a - b).mean(axis=(0, 2)) / 255.0
+
+
+def _longest_flat_run(profile, threshold):
+    best_start = best_len = 0
+    start = None
+    for i, v in enumerate(profile):
+        if v <= threshold:
+            if start is None:
+                start = i
+        else:
+            if start is not None and i - start > best_len:
+                best_start, best_len = start, i - start
+            start = None
+    if start is not None and len(profile) - start > best_len:
+        best_start, best_len = start, len(profile) - start
+    return best_start, best_len
+
+
+def _axis_slice(profile, length, min_center, flat_frac):
+    """Return (low_inset, high_inset, confidence) or None when the axis cannot be stretched."""
+    if profile.size < 3:
+        return None
+    lo = float(np.percentile(profile, 30))
+    hi = float(np.percentile(profile, 95))
+    threshold = max(1.5 / 255.0, lo + flat_frac * (hi - lo))
+    start, run = _longest_flat_run(profile, threshold)
+    if run < min_center:
+        return None
+    low = int(start)
+    high = int(length - (start + run + 1))
+    if low < 0 or high < 0:
+        return None
+    centre = float(profile[start:start + run].mean())
+    border = np.concatenate([profile[:start], profile[start + run:]])
+    outer = float(border.mean()) if border.size else 0.0
+    confidence = 0.0 if outer <= 1e-6 else max(0.0, min(1.0, 1.0 - centre / outer))
+    if border.size == 0:
+        confidence = 1.0          # perfectly uniform along this axis
+    return low, high, confidence
+
+
+def nine_slice(rgba, min_center=6, flat_frac=0.15, min_confidence=0.55, min_inset=2,
+               min_opaque=0.35, min_side=24, max_parts=1, silhouette_tol=0.04,
+               max_circularity=0.82):
+    """Work out 9-slice borders for a UI sprite.
+
+    A 9-slice sprite has a middle band that repeats along the stretch axis, so scanning the
+    difference between neighbouring rows and columns finds it directly: the corners and the
+    bevel change fast, the stretchable middle does not.
+
+    Returns a dict with left/right/top/bottom insets, whether each axis may stretch at all, and
+    a confidence. An element with a diagonal gloss or a centred ornament has no flat band and is
+    reported as not stretchable rather than given a wrong guess.
+    """
+    if rgba.ndim != 3 or rgba.shape[2] < 3:
+        raise ValueError("nine_slice expects an HxWx3 or HxWx4 array")
+    if rgba.shape[2] == 3:
+        rgba = np.dstack([rgba, np.full(rgba.shape[:2], 255, np.uint8)])
+    height, width = rgba.shape[:2]
+
+    reject = {"left": 0, "right": 0, "top": 0, "bottom": 0,
+              "stretch_x": False, "stretch_y": False,
+              "confidence_x": 0.0, "confidence_y": 0.0, "nine_slice": False}
+
+    # 9-slice only means anything for a solid plate. A sprite that is mostly holes - a card whose
+    # contents were peeled out, a ribbon traced around its own text - has no coherent border to
+    # keep, and measuring one produces confident nonsense.
+    if height < min_side or width < min_side:
+        return dict(reject, reason="too small")
+    alpha = rgba[:, :, 3] > 127
+    opaque = float(alpha.mean())
+    if opaque < min_opaque:
+        return dict(reject, reason=f"only {opaque:.0%} opaque")
+
+    # One plate, not a handful of leftovers. A card whose contents were peeled out, or a ribbon
+    # traced around its own text, comes back in pieces and has no border worth keeping.
+    count, _, stats, _ = cv2.connectedComponentsWithStats(alpha.astype(np.uint8), connectivity=8)
+    if count > 1:
+        areas = stats[1:, cv2.CC_STAT_AREA]
+        parts = int((areas >= 0.05 * areas.max()).sum())
+        if parts > max_parts:
+            return dict(reject, reason=f"{parts} disconnected parts")
+
+    # A disc has no straight side to stretch along, and its interior looks flat enough to fool
+    # the profile, so measure the outline directly: circularity near 1 means a round icon.
+    contours, _ = cv2.findContours(alpha.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    if contours:
+        biggest = max(contours, key=cv2.contourArea)
+        perimeter = cv2.arcLength(biggest, True)
+        if perimeter > 0:
+            circularity = 4.0 * np.pi * cv2.contourArea(biggest) / (perimeter * perimeter)
+            if circularity > max_circularity:
+                return dict(reject, reason=f"round shape (circularity {circularity:.2f})")
+
+    horizontal = _axis_slice(_axis_profile(rgba, 1), width, min_center, flat_frac)
+    vertical = _axis_slice(_axis_profile(rgba, 0), height, min_center, flat_frac)
+
+    # The band a 9-slice stretches must have straight sides. A round icon has a flat-looking
+    # interior but its outline curves the whole way, so stretching it makes a capsule.
+    if horizontal is not None:
+        low, high, _ = horizontal
+        run = alpha[:, low:width - high].sum(axis=0).astype(np.float32)
+        if run.size < 2 or run.std() > silhouette_tol * height:
+            horizontal = None
+    if vertical is not None:
+        low, high, _ = vertical
+        run = alpha[low:height - high, :].sum(axis=1).astype(np.float32)
+        if run.size < 2 or run.std() > silhouette_tol * width:
+            vertical = None
+
+    left = right = top = bottom = 0
+    stretch_x = stretch_y = False
+    conf_x = conf_y = 0.0
+    if horizontal is not None:
+        left, right, conf_x = horizontal
+        stretch_x = conf_x >= min_confidence and (left >= min_inset or right >= min_inset
+                                                  or conf_x >= 0.95)
+    if vertical is not None:
+        top, bottom, conf_y = vertical
+        stretch_y = conf_y >= min_confidence and (top >= min_inset or bottom >= min_inset
+                                                  or conf_y >= 0.95)
+    if not stretch_x:
+        left = right = 0
+    if not stretch_y:
+        top = bottom = 0
+    result = {
+        "left": int(left), "right": int(right), "top": int(top), "bottom": int(bottom),
+        "stretch_x": bool(stretch_x), "stretch_y": bool(stretch_y),
+        "confidence_x": round(float(conf_x), 3), "confidence_y": round(float(conf_y), 3),
+        "nine_slice": bool(stretch_x or stretch_y),
+    }
+    if not result["nine_slice"]:
+        result["reason"] = "no repeating band on either axis"
+    return result
+
+
+def nine_slice_resize(rgba, width, height, borders):
+    """Scale a sprite the way an engine would, so a detection can be checked against the source."""
+    src_h, src_w = rgba.shape[:2]
+    left, right = int(borders.get("left", 0)), int(borders.get("right", 0))
+    top, bottom = int(borders.get("top", 0)), int(borders.get("bottom", 0))
+    left = min(left, max(0, src_w - 1))
+    right = min(right, max(0, src_w - 1 - left))
+    top = min(top, max(0, src_h - 1))
+    bottom = min(bottom, max(0, src_h - 1 - top))
+    xs_src = [(0, left), (left, src_w - right), (src_w - right, src_w)]
+    ys_src = [(0, top), (top, src_h - bottom), (src_h - bottom, src_h)]
+    xs_dst = [(0, left), (left, width - right), (width - right, width)]
+    ys_dst = [(0, top), (top, height - bottom), (height - bottom, height)]
+    out = np.zeros((height, width, rgba.shape[2]), rgba.dtype)
+    for (sy0, sy1), (dy0, dy1) in zip(ys_src, ys_dst):
+        for (sx0, sx1), (dx0, dx1) in zip(xs_src, xs_dst):
+            if sy1 <= sy0 or sx1 <= sx0 or dy1 <= dy0 or dx1 <= dx0:
+                continue
+            patch = rgba[sy0:sy1, sx0:sx1]
+            if (dy1 - dy0, dx1 - dx0) != patch.shape[:2]:
+                patch = cv2.resize(patch, (dx1 - dx0, dy1 - dy0), interpolation=cv2.INTER_LINEAR)
+            out[dy0:dy1, dx0:dx1] = patch
+    return out
