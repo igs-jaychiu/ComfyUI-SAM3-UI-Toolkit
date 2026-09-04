@@ -828,6 +828,8 @@ class SAM3NineSlice:
     RETURN_TYPES = ("STRING", "STRING")
     RETURN_NAMES = ("NINESLICE_JSON", "SUMMARY")
     OUTPUT_IS_LIST = (False, False)
+    # its product is a file on disk, so it must run even when nothing consumes its string outputs
+    OUTPUT_NODE = True
     FUNCTION = "detect"
     CATEGORY = "image/detection"
 
