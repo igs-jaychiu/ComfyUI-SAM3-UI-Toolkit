@@ -991,6 +991,8 @@ class SAM3NineSlice:
             },
             "optional": {
                 "coords_json": ("STRING", {"forceInput": True}),
+                # chain the layers together so one combined report reaches the packer
+                "previous_json": ("STRING", {"forceInput": True}),
             },
         }
 
@@ -1031,7 +1033,7 @@ class SAM3NineSlice:
 
     def detect(self, images, min_center=6, flat_frac=0.15, min_confidence=0.55, min_opaque=0.35,
                silhouette_tol=0.04, max_circularity=0.82, write_9png=False, prefix="",
-               coords_json=None):
+               coords_json=None, previous_json=None):
         import numpy as np
 
         min_center = int(self._first(min_center, 6))
@@ -1064,6 +1066,14 @@ class SAM3NineSlice:
                 print(f"[SAM3NineSlice] cannot resolve output directory: {error}")
 
         results = []
+        carried = self._first(previous_json, None)
+        if carried:
+            try:
+                earlier = json.loads(carried)
+                if isinstance(earlier, list):
+                    results.extend(earlier)
+            except (TypeError, ValueError):
+                pass
         stretchable = 0
         for index, image in enumerate(images, 1):
             tensor = image[0] if image.ndim == 4 else image
@@ -1104,7 +1114,7 @@ class SAM3NineSlice:
                     handle.write(payload)
             except Exception as error:  # noqa: BLE001
                 print(f"[SAM3NineSlice] could not write json: {error}")
-        summary = f"{stretchable}/{len(results)} sprites are 9-sliceable"
+        summary = f"{stretchable} of this layer are 9-sliceable ({len(results)} carried in total)"
         return (payload, summary)
 
 
