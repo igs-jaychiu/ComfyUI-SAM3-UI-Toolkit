@@ -960,6 +960,8 @@ class SAM3CropToRGBA:
             },
             # kept optional so a graph saved before these existed still validates
             "optional": {
+                "defringe": ("BOOLEAN", {"default": True}),
+                "defringe_floor": ("FLOAT", {"default": 0.80, "min": 0.02, "max": 0.99, "step": 0.01}),
                 "matte_min_coverage": ("FLOAT", {"default": 0.40, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "matte_tight_edge": ("FLOAT", {"default": 0.90, "min": 0.0, "max": 5.0, "step": 0.05}),
                 "meta_json": ("STRING", {"forceInput": True}),
@@ -1035,7 +1037,8 @@ class SAM3CropToRGBA:
     def crop(self, image, masks, padding=2, feather=1, coords_prefix="", layer=0,
              matte="difference", matte_low=0.10, matte_high=0.35,
              matte_min_coverage=0.40, matte_tight_edge=0.90,
-             align_siblings=True, align_tolerance=0.12, meta_json=""):
+             align_siblings=True, align_tolerance=0.12,
+             defringe=True, defringe_floor=0.80, meta_json=""):
         import cv2
         import numpy as np
 
@@ -1095,7 +1098,22 @@ class SAM3CropToRGBA:
                 alpha = (mask[y1:y2, x1:x2] * 255).astype(np.uint8)
             if feather > 0:
                 alpha = cv2.GaussianBlur(alpha, (2 * feather + 1, 2 * feather + 1), 0)
-            rgba = np.dstack([rgb[y1:y2, x1:x2], alpha]).astype(np.float32) / 255.0
+
+            colour = rgb[y1:y2, x1:x2]
+            if defringe:
+                # A partly transparent edge pixel is a blend of the object and whatever was
+                # behind it. Pairing the source colour with an alpha keeps that background on
+                # the rim, which is the halo around an extracted sprite; solve it out.
+                background, region = auto_filter.estimate_background(rgb, mask)
+                if background is not None:
+                    bx1, by1, bx2, by2 = region
+                    sy1, sy2 = y1 - by1, y2 - by1
+                    sx1, sx2 = x1 - bx1, x2 - bx1
+                    if 0 <= sy1 and 0 <= sx1 and sy2 <= background.shape[0] and sx2 <= background.shape[1]:
+                        colour = auto_filter.unmix_foreground(
+                            colour, alpha.astype(np.float32) / 255.0,
+                            background[sy1:sy2, sx1:sx2], float(defringe_floor))
+            rgba = np.dstack([colour, alpha]).astype(np.float32) / 255.0
             images.append(torch.from_numpy(rgba).to(dtype=image.dtype, device=image.device).unsqueeze(0))
             record = {"index": index, "x": x1, "y": y1, "w": x2 - x1, "h": y2 - y1}
             if index - 1 < len(meta_rows):
@@ -1104,10 +1122,8 @@ class SAM3CropToRGBA:
                                "label": m.get("label"), "votes": m.get("votes"),
                                "parent": m.get("parent"), "area": m.get("area")})
             coords.append(record)
-        if not images:
-            # An empty layer is normal in a generic pipeline; emit a 1x1 transparent stub so the
-            # graph keeps running instead of aborting the whole extraction.
-            images = [torch.zeros((1, 1, 1, 4), dtype=image.dtype, device=image.device)]
+        # An empty layer is normal in a generic pipeline. Returning no image at all keeps a
+        # placeholder file out of the output folder; SaveImage downstream simply writes nothing.
         payload = json.dumps(coords, indent=1, ensure_ascii=False)
         if coords_prefix.strip():
             try:

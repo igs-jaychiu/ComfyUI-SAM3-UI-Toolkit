@@ -647,7 +647,8 @@ def auto_layers(masks, labels=None, dedupe_iou=0.85, contain_ratio=0.85, min_are
 # --------------------------------------------------------------------------- alpha refinement
 
 def difference_matte(image, mask, low=0.10, high=0.35, min_coverage=0.40, pad=6,
-                     smooth=1, keep_largest=True, max_interior_hole=0.25, tight_edge=0.9):
+                     smooth=1, keep_largest=True, max_interior_hole=0.25, tight_edge=0.9,
+                     max_pieces=12):
     """Turn a blob-shaped mask into a shape-accurate alpha using a difference matte.
 
     SAM3 returns text as a filled rectangle, so a "text" sprite comes out with its plate baked
@@ -711,6 +712,17 @@ def difference_matte(image, mask, low=0.10, high=0.35, min_coverage=0.40, pad=6,
     coverage = float((alpha > 0.5).sum()) / max(1, int(sm.sum()))
     if coverage < min_coverage:
         return mask.astype(np.float32)
+
+    # Splitting a word into its glyphs is the point; shattering a scene prop into dozens of
+    # specks is not. Past a sane piece count the matte is destroying the element, so keep the
+    # mask it started from.
+    if max_pieces > 0:
+        solid_u = (alpha > 0.5).astype(np.uint8)
+        n_p, _, stats_p, _ = cv2.connectedComponentsWithStats(solid_u, connectivity=8)
+        if n_p > 1:
+            sizes = stats_p[1:, cv2.CC_STAT_AREA]
+            if int((sizes >= 30).sum()) > max_pieces:
+                return mask.astype(np.float32)
 
     # A difference matte hollows out anything whose middle matches what surrounds it - a brick
     # stud sitting on the brick becomes a ring. Tell that apart from a glyph counter by whether
@@ -909,3 +921,50 @@ def nine_slice_resize(rgba, width, height, borders):
                 patch = cv2.resize(patch, (dx1 - dx0, dy1 - dy0), interpolation=cv2.INTER_LINEAR)
             out[dy0:dy1, dx0:dx1] = patch
     return out
+
+
+def estimate_background(image, mask, pad=6):
+    """Estimate what sits behind a mask by inpainting it away, on a padded crop."""
+    box = bbox(mask)
+    if box is None:
+        return None, None
+    height, width = mask.shape
+    x1 = max(0, box[0] - pad)
+    y1 = max(0, box[1] - pad)
+    x2 = min(width, box[2] + pad)
+    y2 = min(height, box[3] + pad)
+    sub = image[y1:y2, x1:x2]
+    sm = mask[y1:y2, x1:x2]
+    if sm.sum() < 12:
+        return None, None
+    filled = inpaint_interp(sub.astype(np.uint8), sm, blur=True, blur_scale=0.35,
+                            sim_scale=14.0, blur_max=61)
+    return filled.astype(np.float32), (x1, y1, x2, y2)
+
+
+def unmix_foreground(rgb, alpha, background, alpha_floor=0.80):
+    """Recover the object's own colour from a composited edge.
+
+    Every partly transparent pixel is a blend: C = a*F + (1-a)*B. Cutting a sprite by simply
+    pairing the source pixels with an alpha keeps B in the result, which is the halo you see
+    around an extracted button - the old page colour still sitting on its rim. Solving for F
+    removes it. Below `alpha_floor` the division is too ill-conditioned to trust, so those
+    pixels take their colour from the nearest reliable neighbour instead.
+    """
+    a = alpha.astype(np.float32)
+    if a.max() <= 0:
+        return rgb
+    a3 = a[..., None]
+    reliable = a >= alpha_floor
+    fore = rgb.astype(np.float32).copy()
+    with np.errstate(divide="ignore", invalid="ignore"):
+        solved = (rgb.astype(np.float32) - (1.0 - a3) * background) / np.maximum(a3, 1e-6)
+    solved = np.clip(solved, 0.0, 255.0)
+    fore[reliable] = solved[reliable]
+
+    # carry colour outward into the faint rim, where the algebra is unstable
+    unknown = (a > 0.0) & ~reliable
+    if unknown.any() and reliable.any():
+        fore = cv2.inpaint(fore.astype(np.uint8), unknown.astype(np.uint8) * 255, 3,
+                           cv2.INPAINT_TELEA).astype(np.float32)
+    return np.clip(fore, 0, 255).astype(np.uint8)
