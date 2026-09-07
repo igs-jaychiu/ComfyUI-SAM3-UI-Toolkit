@@ -795,6 +795,172 @@ class SAM3AutoLayerMasks:
         return (*outs, payload, summary)
 
 
+class SAM3PackAssets:
+    """Write every extracted sprite plus a zip of the lot, and offer it as a download.
+
+    ComfyUI has no bulk download: the browser saves one image at a time, which is unusable for
+    a few hundred sprites. This node bundles the sprites with their coordinates and 9-slice
+    borders into a single zip under the output folder and reports its /view URL, so the web
+    extension that ships with this pack can put a download button on the node.
+
+    It encodes the images itself rather than reading them back off disk, which removes any
+    question of whether the SaveImage nodes have run yet.
+    """
+
+    SLOTS = 8
+    INPUT_IS_LIST = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        optional = {}
+        for i in range(1, cls.SLOTS + 1):
+            optional[f"layer_{i}"] = ("IMAGE",)
+            optional[f"coords_{i}"] = ("STRING", {"forceInput": True})
+        optional["background"] = ("IMAGE",)
+        optional["nineslice_json"] = ("STRING", {"forceInput": True})
+        return {
+            "required": {
+                "pack_name": ("STRING", {"default": "sam3_assets", "multiline": False}),
+                "curate": ("BOOLEAN", {"default": True}),
+                "curate_min_votes": ("INT", {"default": 3, "min": 1, "max": 20, "step": 1}),
+                "curate_min_side": ("INT", {"default": 24, "min": 1, "max": 512, "step": 1}),
+            },
+            "optional": optional,
+        }
+
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("DOWNLOAD_URL", "SUMMARY")
+    OUTPUT_IS_LIST = (False, False)
+    OUTPUT_NODE = True
+    FUNCTION = "pack"
+    CATEGORY = "image/crop"
+
+    @staticmethod
+    def _one(value, default=None):
+        """INPUT_IS_LIST wraps every widget in a list; take the single value back out."""
+        if isinstance(value, list):
+            return value[0] if value else default
+        return value if value is not None else default
+
+    @staticmethod
+    def _as_png_bytes(tensor):
+        import cv2
+        import numpy as np
+
+        array = tensor[0] if tensor.ndim == 4 else tensor
+        rgba = (array.detach().cpu().clamp(0.0, 1.0).numpy() * 255.0).round().astype(np.uint8)
+        if rgba.shape[2] == 3:
+            rgba = np.dstack([rgba, np.full(rgba.shape[:2], 255, np.uint8)])
+        ok, buf = cv2.imencode(".png", cv2.cvtColor(rgba, cv2.COLOR_RGBA2BGRA))
+        return buf.tobytes() if ok else None
+
+    def pack(self, pack_name="sam3_assets", curate=True, curate_min_votes=3,
+             curate_min_side=24, **kwargs):
+        import io
+        import zipfile
+
+        pack_name = str(self._one(pack_name, "sam3_assets") or "sam3_assets").strip()
+        pack_name = "".join(c for c in pack_name if c.isalnum() or c in "-_") or "sam3_assets"
+        curate = bool(self._one(curate, True))
+        min_votes = int(self._one(curate_min_votes, 3))
+        min_side = int(self._one(curate_min_side, 24))
+
+        try:
+            import folder_paths
+
+            out_dir = folder_paths.get_output_directory()
+        except Exception as error:  # noqa: BLE001
+            raise RuntimeError(f"SAM3PackAssets cannot resolve the output directory: {error}")
+
+        nine = {}
+        raw_nine = self._one(kwargs.get("nineslice_json"), None)
+        if raw_nine:
+            try:
+                for row in json.loads(raw_nine):
+                    if row.get("uid"):
+                        nine[row["uid"]] = row
+            except (TypeError, ValueError):
+                pass
+
+        manifest = {"pack": pack_name, "elements": [], "curated": []}
+        buffer = io.BytesIO()
+        written = curated = 0
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            for slot in range(1, self.SLOTS + 1):
+                images = kwargs.get(f"layer_{slot}")
+                if images is None:
+                    continue
+                if not isinstance(images, list):
+                    images = [images]
+                rows = []
+                raw = self._one(kwargs.get(f"coords_{slot}"), None)
+                if raw:
+                    try:
+                        rows = json.loads(raw)
+                    except (TypeError, ValueError):
+                        rows = []
+                for index, tensor in enumerate(images):
+                    if getattr(tensor, "ndim", 0) < 3:
+                        continue
+                    data = self._as_png_bytes(tensor)
+                    if data is None or len(data) < 100:
+                        continue
+                    info = rows[index] if index < len(rows) and isinstance(rows[index], dict) else {}
+                    uid = info.get("uid") or f"L{slot}_{index + 1}"
+                    label = info.get("label") or "part"
+                    name = f"{uid}_{label}.png"
+                    archive.writestr(f"all/layer{slot}/{name}", data)
+                    written += 1
+                    record = {"file": f"all/layer{slot}/{name}"}
+                    record.update(info)
+                    if uid in nine:
+                        record["nine_slice"] = {
+                            k: nine[uid][k] for k in
+                            ("left", "right", "top", "bottom", "stretch_x", "stretch_y")
+                            if k in nine[uid]
+                        }
+                    manifest["elements"].append(record)
+                    # The curated set drops the fine-grained pieces - a glyph of a title, a stud
+                    # of a brick. Vote count and size are the two signals that stay meaningful
+                    # without relying on the prompt labels, which do not track semantics.
+                    if curate:
+                        votes = info.get("votes")
+                        wide = info.get("w") or 0
+                        tall = info.get("h") or 0
+                        if (votes is None or votes >= min_votes) and min(wide, tall) >= min_side:
+                            archive.writestr(f"curated/{name}", data)
+                            manifest["curated"].append(f"curated/{name}")
+                            curated += 1
+
+            background = kwargs.get("background")
+            if background is not None:
+                bg = background[0] if isinstance(background, list) else background
+                data = self._as_png_bytes(bg)
+                if data:
+                    archive.writestr("background.png", data)
+                    manifest["background"] = "background.png"
+
+            archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=1))
+
+        subfolder = "sam3_packs"
+        target_dir = os.path.join(out_dir, subfolder)
+        os.makedirs(target_dir, exist_ok=True)
+        filename = f"{pack_name}.zip"
+        payload = buffer.getvalue()
+        with open(os.path.join(target_dir, filename), "wb") as handle:
+            handle.write(payload)
+
+        url = f"/view?filename={filename}&subfolder={subfolder}&type=output"
+        summary = (f"{written} sprites"
+                   + (f", {curated} curated" if curate else "")
+                   + f" -> {filename} ({len(payload) / 1e6:.1f} MB)")
+        return {
+            "ui": {"sam3_pack": [{"filename": filename, "subfolder": subfolder,
+                                  "type": "output", "url": url, "summary": summary}]},
+            "result": (url, summary),
+        }
+
+
 class SAM3NineSlice:
     """Work out 9-slice borders for each extracted sprite and record them.
 
@@ -1311,6 +1477,7 @@ NODE_CLASS_MAPPINGS = {
     "SAM3AutoLayerMasks": SAM3AutoLayerMasks,
     "SAM3PromptBank": SAM3PromptBank,
     "SAM3NineSlice": SAM3NineSlice,
+    "SAM3PackAssets": SAM3PackAssets,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "SAM3MaskBatchConcat": "Concat SAM3 Mask Batches",
@@ -1319,6 +1486,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "SAM3AutoLayerMasks": "Auto Layer SAM3 Masks (z-order)",
     "SAM3PromptBank": "SAM3 Prompt Bank (run many prompts)",
     "SAM3NineSlice": "Detect 9-Slice Borders",
+    "SAM3PackAssets": "Pack Assets For Download",
     "SAM3BatchCropToObjects": "Crop SAM3 Batch To Objects",
     "SAM3MergeMaskBatch": "Merge SAM3 Mask Batch",
     "SAM3SelectionOverlay": "Overlay SAM3 Selection",
