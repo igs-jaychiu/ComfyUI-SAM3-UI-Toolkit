@@ -902,8 +902,11 @@ class SAM3PackAssets:
                 for index, tensor in enumerate(images):
                     if getattr(tensor, "ndim", 0) < 3:
                         continue
+                    shape = tensor.shape[-3:-1] if tensor.ndim == 4 else tensor.shape[:2]
+                    if min(int(shape[0]), int(shape[1])) < 2:
+                        continue          # the 1x1 placeholder an empty layer emits
                     data = self._as_png_bytes(tensor)
-                    if data is None or len(data) < 100:
+                    if data is None:
                         continue
                     info = rows[index] if index < len(rows) and isinstance(rows[index], dict) else {}
                     uid = info.get("uid") or f"L{slot}_{index + 1}"
@@ -1288,8 +1291,11 @@ class SAM3CropToRGBA:
                                "label": m.get("label"), "votes": m.get("votes"),
                                "parent": m.get("parent"), "area": m.get("area")})
             coords.append(record)
-        # An empty layer is normal in a generic pipeline. Returning no image at all keeps a
-        # placeholder file out of the output folder; SaveImage downstream simply writes nothing.
+        if not images:
+            # An empty layer is normal in a generic pipeline, and SaveImage cannot take an empty
+            # batch, so emit a 1x1 transparent placeholder to keep the graph running. The pack
+            # node drops these, so they never reach the delivered assets.
+            images = [torch.zeros((1, 1, 1, 4), dtype=image.dtype, device=image.device)]
         payload = json.dumps(coords, indent=1, ensure_ascii=False)
         if coords_prefix.strip():
             try:
