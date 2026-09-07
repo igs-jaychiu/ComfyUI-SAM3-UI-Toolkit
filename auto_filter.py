@@ -803,9 +803,22 @@ def _axis_slice(profile, length, min_center, flat_frac):
     return low, high, confidence
 
 
+
+def _runs_per_line(alpha, axis):
+    """Median number of separate opaque spans along each line. A solid plate gives 1."""
+    lines = alpha if axis == 0 else alpha.T
+    counts = []
+    for line in lines:
+        edges = np.diff(np.concatenate(([0], line.astype(np.uint8), [0])))
+        n = int((edges == 1).sum())
+        if n:
+            counts.append(n)
+    return float(np.median(counts)) if counts else 0.0
+
+
 def nine_slice(rgba, min_center=6, flat_frac=0.15, min_confidence=0.55, min_inset=2,
-               min_opaque=0.35, min_side=24, max_parts=1, silhouette_tol=0.04,
-               max_circularity=0.82):
+               min_opaque=0.35, min_side=48, max_parts=1, silhouette_tol=0.04,
+               max_circularity=0.82, max_runs=1, min_band_frac=0.25):
     """Work out 9-slice borders for a UI sprite.
 
     A 9-slice sprite has a middle band that repeats along the stretch axis, so scanning the
@@ -859,17 +872,24 @@ def nine_slice(rgba, min_center=6, flat_frac=0.15, min_confidence=0.55, min_inse
     horizontal = _axis_slice(_axis_profile(rgba, 1), width, min_center, flat_frac)
     vertical = _axis_slice(_axis_profile(rgba, 0), height, min_center, flat_frac)
 
-    # The band a 9-slice stretches must have straight sides. A round icon has a flat-looking
-    # interior but its outline curves the whole way, so stretching it makes a capsule.
+    # The band a 9-slice stretches must have straight sides and be solid across. A round icon
+    # has a flat-looking interior but an outline that curves the whole way, and a word is a row
+    # of strokes with gaps - stretching either one is wrong.
     if horizontal is not None:
         low, high, _ = horizontal
-        run = alpha[:, low:width - high].sum(axis=0).astype(np.float32)
+        band = alpha[:, low:width - high]
+        run = band.sum(axis=0).astype(np.float32)
         if run.size < 2 or run.std() > silhouette_tol * height:
+            horizontal = None
+        elif max_runs > 0 and _runs_per_line(band, 1) > max_runs:
             horizontal = None
     if vertical is not None:
         low, high, _ = vertical
-        run = alpha[low:height - high, :].sum(axis=1).astype(np.float32)
+        band = alpha[low:height - high, :]
+        run = band.sum(axis=1).astype(np.float32)
         if run.size < 2 or run.std() > silhouette_tol * width:
+            vertical = None
+        elif max_runs > 0 and _runs_per_line(band, 0) > max_runs:
             vertical = None
 
     left = right = top = bottom = 0
@@ -877,12 +897,18 @@ def nine_slice(rgba, min_center=6, flat_frac=0.15, min_confidence=0.55, min_inse
     conf_x = conf_y = 0.0
     if horizontal is not None:
         left, right, conf_x = horizontal
-        stretch_x = conf_x >= min_confidence and (left >= min_inset or right >= min_inset
-                                                  or conf_x >= 0.95)
+        # A sliver of a middle is not worth stretching, and a detection that finds one is
+        # usually reading a glyph's own bowl rather than a repeating band.
+        band_ok = (width - left - right) >= min_band_frac * width
+        stretch_x = band_ok and conf_x >= min_confidence and (left >= min_inset
+                                                              or right >= min_inset
+                                                              or conf_x >= 0.95)
     if vertical is not None:
         top, bottom, conf_y = vertical
-        stretch_y = conf_y >= min_confidence and (top >= min_inset or bottom >= min_inset
-                                                  or conf_y >= 0.95)
+        band_ok = (height - top - bottom) >= min_band_frac * height
+        stretch_y = band_ok and conf_y >= min_confidence and (top >= min_inset
+                                                              or bottom >= min_inset
+                                                              or conf_y >= 0.95)
     if not stretch_x:
         left = right = 0
     if not stretch_y:
