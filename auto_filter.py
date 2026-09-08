@@ -218,6 +218,42 @@ def shadow_grow(image, mask, reach=24, thresh=14.0, base=3, bg_std_max=30.0, max
     return out
 
 
+def solve_layer_sprite(source, under, support, alpha, floor=0.50):
+    """Express what a peel removed as RGBA that composites back over the peel's own result.
+
+    Estimating "what is behind this element" was always a guess, and the guess had to agree
+    with a second, differently-parameterised guess made later by the layer inpaint or the rim
+    came out wrong. But the inpaint result is the ground truth for what will sit underneath the
+    sprite when the screen is rebuilt, so given it there is nothing to estimate: solve
+    C = a*F + (1-a)*U for the colour, then take alpha as the point on the segment U -> F closest
+    to C. Where the two agree there is nothing to recover and the matte's own alpha stands.
+    """
+    colour = source.astype(np.float32)
+    below = under.astype(np.float32)
+    a = alpha.astype(np.float32)
+    a3 = a[..., None]
+    reliable = a >= floor
+    fore = colour.copy()
+    with np.errstate(divide="ignore", invalid="ignore"):
+        solved = (colour - (1.0 - a3) * below) / np.maximum(a3, 1e-6)
+    fore[reliable] = np.clip(solved, 0.0, 255.0)[reliable]
+
+    # a faint rim or a soft shadow has no usable ratio of its own; it takes the colour of the
+    # nearest pixel that did
+    unknown = support & ~reliable
+    if unknown.any() and reliable.any():
+        fore = cv2.inpaint(fore.astype(np.uint8), unknown.astype(np.uint8) * 255, 3,
+                           cv2.INPAINT_TELEA).astype(np.float32)
+    span = fore - below
+    denom = (span * span).sum(axis=2)
+    numer = ((colour - below) * span).sum(axis=2)
+    usable = support & (denom > 4.0)
+    projected = np.divide(numer, denom, out=a.copy(), where=usable)
+    out = np.where(usable, np.clip(projected, 0.0, 1.0), a)
+    out[~support] = 0.0
+    return np.clip(fore, 0, 255).astype(np.uint8), out
+
+
 def halo_alpha(image, extra, background):
     """Turn the drop shadow / glow around an element into alpha the sprite can carry.
 

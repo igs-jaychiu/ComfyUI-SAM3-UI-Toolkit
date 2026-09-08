@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 5
+BUILD = 6
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -1155,6 +1155,10 @@ class SAM3CropToRGBA:
                 "halo_grow": ("INT", {"default": 5, "min": 0, "max": 64, "step": 1}),
                 "halo_reach": ("INT", {"default": 18, "min": 0, "max": 128, "step": 1}),
                 "halo_thresh": ("FLOAT", {"default": 13.0, "min": 1.0, "max": 128.0, "step": 0.5}),
+                # The same layer's inpaint output. With it there is nothing to estimate: the
+                # sprite is solved to be exactly what the peel took away.
+                "under": ("IMAGE",),
+                "under_thresh": ("FLOAT", {"default": 4.0, "min": 0.5, "max": 64.0, "step": 0.5}),
                 "meta_json": ("STRING", {"forceInput": True}),
             },
         }
@@ -1184,6 +1188,17 @@ class SAM3CropToRGBA:
         boxes = [(r["x"], r["y"], r["x"] + r["w"], r["y"] + r["h"]) for r in rows]
         groups = cls._sibling_sizes(boxes, tolerance)
         return {rows[i].get("uid"): size for i, size in groups.items() if rows[i].get("uid")}
+
+    @staticmethod
+    def _record(index, x1, y1, x2, y2, meta_rows):
+        """Coordinates for one sprite, carrying the layer metadata that goes with it."""
+        record = {"index": index, "x": x1, "y": y1, "w": x2 - x1, "h": y2 - y1}
+        if index - 1 < len(meta_rows):
+            row = meta_rows[index - 1]
+            record.update({"uid": row.get("uid"), "layer": row.get("layer"),
+                           "label": row.get("label"), "votes": row.get("votes"),
+                           "parent": row.get("parent"), "area": row.get("area")})
+        return record
 
     @staticmethod
     def _sibling_sizes(boxes, tolerance=0.12):
@@ -1230,7 +1245,8 @@ class SAM3CropToRGBA:
              matte_min_coverage=0.40, matte_tight_edge=0.90,
              align_siblings=True, align_tolerance=0.12,
              defringe=True, defringe_floor=0.80, halo=True, halo_grow=5,
-             halo_reach=18, halo_thresh=13.0, meta_json=""):
+             halo_reach=18, halo_thresh=13.0, under=None, under_thresh=4.0,
+             meta_json=""):
         import cv2
         import numpy as np
 
@@ -1250,8 +1266,22 @@ class SAM3CropToRGBA:
         # The peel erases each element together with its shadow, so the sprite has to be cut
         # wide enough to carry that shadow away with it - otherwise it is lost from the asset
         # and bitten out of the background underneath.
+        peeled = _image_to_uint8(under) if under is not None else None
+        if peeled is not None and peeled.shape[:2] != (height, width):
+            peeled = None
         regions = list(bool_masks)
-        if halo and int(halo_reach) > 0:
+        if peeled is not None:
+            # What the peel changed is not a guess: measure it. Another element of the same
+            # layer also shows up in that difference, so its own mask is fenced off.
+            changed = np.abs(rgb.astype(np.float32)
+                             - peeled.astype(np.float32)).max(axis=2) > float(under_thresh)
+            union = np.zeros((height, width), bool)
+            for m in bool_masks:
+                union |= m
+            reach = max(1, int(halo_reach))
+            regions = [m | (auto_filter.grow(m, reach) & changed & ~(union & ~m))
+                       for m in bool_masks]
+        elif halo and int(halo_reach) > 0:
             regions = [auto_filter.shadow_grow(rgb, m, reach=int(halo_reach),
                                                thresh=float(halo_thresh), base=int(halo_grow))
                        for m in bool_masks]
@@ -1304,6 +1334,16 @@ class SAM3CropToRGBA:
             region = regions[index - 1]
             # One estimate of what is behind this element serves both jobs below. Taken over the
             # halo region rather than the mask, it is the clean plate: element and shadow gone.
+            if peeled is not None:
+                colour, solved_alpha = auto_filter.solve_layer_sprite(
+                    source, peeled[y1:y2, x1:x2], region[y1:y2, x1:x2],
+                    alpha.astype(np.float32) / 255.0, float(defringe_floor))
+                alpha = (solved_alpha * 255.0).round().astype(np.uint8)
+                rgba = np.dstack([colour, alpha]).astype(np.float32) / 255.0
+                images.append(torch.from_numpy(rgba).to(dtype=image.dtype,
+                                                        device=image.device).unsqueeze(0))
+                coords.append(self._record(index, x1, y1, x2, y2, meta_rows))
+                continue
             behind = None
             if defringe or (halo and int(halo_reach) > 0):
                 plate, box = auto_filter.estimate_background(
@@ -1330,13 +1370,7 @@ class SAM3CropToRGBA:
                     colour = np.where(take[..., None], shade.astype(np.uint8), colour)
             rgba = np.dstack([colour, alpha]).astype(np.float32) / 255.0
             images.append(torch.from_numpy(rgba).to(dtype=image.dtype, device=image.device).unsqueeze(0))
-            record = {"index": index, "x": x1, "y": y1, "w": x2 - x1, "h": y2 - y1}
-            if index - 1 < len(meta_rows):
-                m = meta_rows[index - 1]
-                record.update({"uid": m.get("uid"), "layer": m.get("layer"),
-                               "label": m.get("label"), "votes": m.get("votes"),
-                               "parent": m.get("parent"), "area": m.get("area")})
-            coords.append(record)
+            coords.append(self._record(index, x1, y1, x2, y2, meta_rows))
         if not images:
             # An empty layer is normal in a generic pipeline, and SaveImage cannot take an empty
             # batch, so emit a 1x1 transparent placeholder to keep the graph running. The pack
