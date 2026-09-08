@@ -259,12 +259,17 @@ def solve_layer_sprite(source, under, support, alpha, floor=0.50, exact_tol=2.0)
     fore = colour.copy()
     with np.errstate(divide="ignore", invalid="ignore"):
         solved = (colour - (1.0 - a3) * below) / np.maximum(a3, 1e-6)
-    fore[reliable] = np.clip(solved, 0.0, 255.0)[reliable]
+    # A solve that runs off the end of the range has not recovered a colour, it has saturated:
+    # clipping it leaves a white or black rim on the sprite, which composites correctly and
+    # looks wrong the moment anyone opens the asset on its own.
+    saturated = ((solved < -1.0) | (solved > 256.0)).any(axis=2)
+    trustworthy = reliable & ~saturated
+    fore[trustworthy] = np.clip(solved, 0.0, 255.0)[trustworthy]
 
     # a faint rim or a soft shadow has no usable ratio of its own; it takes the colour of the
     # nearest pixel that did
-    unknown = support & ~reliable
-    if unknown.any() and reliable.any():
+    unknown = support & ~trustworthy
+    if unknown.any() and trustworthy.any():
         fore = cv2.inpaint(fore.astype(np.uint8), unknown.astype(np.uint8) * 255, 3,
                            cv2.INPAINT_TELEA).astype(np.float32)
     span = fore - below
