@@ -6,6 +6,10 @@ import torch.nn.functional as F
 
 from . import auto_filter
 
+# Bumped on every behaviour change, so a run can name the code that produced it: the
+# deploy has to wait for the server to report this number before a measurement means anything.
+BUILD = 5
+
 
 def _masks_to_bool_list(masks, size=None):
     """MASK tensor (B,H,W) -> list of bool numpy arrays, resized to `size` (H,W) if given."""
@@ -1538,6 +1542,7 @@ class SAM3ReconstructScore:
             "optional": optional,
         }
 
+    DESCRIPTION = f"build {BUILD}"
     RETURN_TYPES = ("IMAGE", "IMAGE", "STRING", "FLOAT")
     RETURN_NAMES = ("RECONSTRUCTION", "ERROR_MAP", "REPORT", "SCORE")
     OUTPUT_IS_LIST = (False, False, False, False)
@@ -1639,6 +1644,7 @@ class SAM3ReconstructScore:
         per_element.sort(key=lambda r: r["within"])
 
         report = {
+            "build": BUILD,
             "score": round(within, 4),
             "pixel_fidelity": round(1.0 - mae, 4),
             "tolerance": int(self._one(tolerance, 10)),
