@@ -1479,7 +1479,162 @@ class SAM3DeterministicInpaint:
         return (torch.stack(outputs),)
 
 
+class SAM3ReconstructScore:
+    """Rebuild the screen from the exported sprites and score it against the source image.
+
+    Until now "did the extraction work" was a matter of looking at previews. Compositing every
+    sprite back onto the background at its recorded coordinates turns it into a number: whatever
+    the rebuilt screen fails to reproduce is a bad alpha, a colour the defringe pushed too far,
+    or a piece cut in the wrong place. That is the only measure that tracks what a UI artist
+    actually needs, because the delivered assets have to redraw the layout they came from.
+    """
+
+    SLOTS = 8
+    INPUT_IS_LIST = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        optional = {"background": ("IMAGE",)}
+        for i in range(1, cls.SLOTS + 1):
+            optional[f"layer_{i}"] = ("IMAGE",)
+            optional[f"coords_{i}"] = ("STRING", {"forceInput": True})
+        return {
+            "required": {
+                "original": ("IMAGE",),
+                "tolerance": ("INT", {"default": 10, "min": 0, "max": 128, "step": 1}),
+            },
+            "optional": optional,
+        }
+
+    RETURN_TYPES = ("IMAGE", "IMAGE", "STRING", "FLOAT")
+    RETURN_NAMES = ("RECONSTRUCTION", "ERROR_MAP", "REPORT", "SCORE")
+    OUTPUT_IS_LIST = (False, False, False, False)
+    OUTPUT_NODE = True
+    FUNCTION = "score"
+    CATEGORY = "image/crop"
+
+    @staticmethod
+    def _one(value, default=None):
+        if isinstance(value, list):
+            return value[0] if value else default
+        return value if value is not None else default
+
+    @staticmethod
+    def _rgba(tensor):
+        import numpy as np
+
+        array = tensor[0] if tensor.ndim == 4 else tensor
+        data = array.detach().cpu().clamp(0.0, 1.0).numpy().astype(np.float32)
+        if data.shape[2] == 3:
+            data = np.dstack([data, np.ones(data.shape[:2], np.float32)])
+        return data
+
+    def score(self, original, tolerance=10, **kwargs):
+        import numpy as np
+
+        source_tensor = self._one(original)
+        if source_tensor is None:
+            raise RuntimeError("SAM3ReconstructScore needs the original image")
+        if source_tensor.ndim == 4:
+            source_tensor = source_tensor[0]
+        source = source_tensor[..., :3].detach().cpu().clamp(0.0, 1.0).numpy().astype(np.float32)
+        height, width = source.shape[:2]
+        tol = int(self._one(tolerance, 10)) / 255.0
+
+        background = self._one(kwargs.get("background"))
+        if background is not None:
+            canvas = self._rgba(background)[..., :3].copy()
+            if canvas.shape[:2] != (height, width):
+                canvas = np.zeros_like(source)
+        else:
+            # No background wired: start from grey so an unpainted hole cannot score as a hit.
+            canvas = np.full_like(source, 0.5)
+        painted = np.zeros((height, width), bool)
+
+        placed = []
+        # Bottom-up: the panel a button sits on is a higher layer, so it has to go down first.
+        for slot in range(self.SLOTS, 0, -1):
+            images = kwargs.get(f"layer_{slot}")
+            if images is None:
+                continue
+            if not isinstance(images, list):
+                images = [images]
+            rows = []
+            raw = self._one(kwargs.get(f"coords_{slot}"))
+            if raw:
+                try:
+                    rows = json.loads(raw)
+                except (TypeError, ValueError):
+                    rows = []
+            for index, tensor in enumerate(images):
+                if getattr(tensor, "ndim", 0) < 3:
+                    continue
+                rgba = self._rgba(tensor)
+                sprite_h, sprite_w = rgba.shape[:2]
+                if min(sprite_h, sprite_w) < 2:
+                    continue          # the 1x1 placeholder an empty layer emits
+                info = rows[index] if index < len(rows) and isinstance(rows[index], dict) else {}
+                x, y = int(info.get("x", 0)), int(info.get("y", 0))
+                x2, y2 = min(width, x + sprite_w), min(height, y + sprite_h)
+                x1, y1 = max(0, x), max(0, y)
+                if x2 <= x1 or y2 <= y1:
+                    continue
+                patch = rgba[y1 - y:y2 - y, x1 - x:x2 - x]
+                alpha = patch[..., 3:4]
+                canvas[y1:y2, x1:x2] = patch[..., :3] * alpha + canvas[y1:y2, x1:x2] * (1.0 - alpha)
+                painted[y1:y2, x1:x2] |= alpha[..., 0] > 0.5
+                placed.append({"uid": info.get("uid") or f"L{slot}_{index + 1}",
+                               "layer": info.get("layer", slot), "label": info.get("label"),
+                               "box": (x1, y1, x2, y2)})
+
+        error = np.abs(canvas - source)
+        worst_channel = error.max(axis=2)
+        mae = float(error.mean())
+        within = float((worst_channel <= tol).mean())
+        mse = float((error ** 2).mean())
+        psnr = float(10.0 * np.log10(1.0 / mse)) if mse > 0 else 99.0
+
+        per_element = []
+        for item in placed:
+            x1, y1, x2, y2 = item["box"]
+            region = worst_channel[y1:y2, x1:x2]
+            if region.size == 0:
+                continue
+            per_element.append({"uid": item["uid"], "layer": item["layer"],
+                                "label": item["label"],
+                                "within": round(float((region <= tol).mean()), 4),
+                                "mae": round(float(error[y1:y2, x1:x2].mean() * 255), 2)})
+        per_element.sort(key=lambda r: r["within"])
+
+        report = {
+            "score": round(within, 4),
+            "pixel_fidelity": round(1.0 - mae, 4),
+            "tolerance": int(self._one(tolerance, 10)),
+            "mae255": round(mae * 255, 3),
+            "psnr": round(psnr, 2),
+            "painted_fraction": round(float(painted.mean()), 4),
+            "sprites": len(placed),
+            "worst": per_element[:15],
+        }
+        payload = json.dumps(report, ensure_ascii=False, indent=1)
+
+        recon = torch.from_numpy(canvas).to(dtype=source_tensor.dtype,
+                                            device=source_tensor.device).unsqueeze(0)
+        heat = np.clip(worst_channel * 4.0, 0.0, 1.0)
+        # red where the rebuild misses, so a preview points straight at the bad sprite
+        heat_rgb = np.dstack([heat, np.zeros_like(heat), np.zeros_like(heat)])
+        heat_rgb = np.maximum(heat_rgb, source * 0.35)
+        heatmap = torch.from_numpy(heat_rgb.astype(np.float32)).to(
+            dtype=source_tensor.dtype, device=source_tensor.device).unsqueeze(0)
+        summary = (f"score {within * 100:.2f}% within {int(self._one(tolerance, 10))}/255, "
+                   f"MAE {mae * 255:.2f}, PSNR {psnr:.1f} dB, {len(placed)} sprites")
+        print(f"[SAM3ReconstructScore] {summary}")
+        return {"ui": {"text": [payload]},
+                "result": (recon, heatmap, payload, round(within, 4))}
+
+
 NODE_CLASS_MAPPINGS = {
+    "SAM3ReconstructScore": SAM3ReconstructScore,
     "SAM3BatchCropToObjects": SAM3BatchCropToObjects,
     "SAM3MergeMaskBatch": SAM3MergeMaskBatch,
     "SAM3SelectionOverlay": SAM3SelectionOverlay,
@@ -1503,6 +1658,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "SAM3PromptBank": "SAM3 Prompt Bank (run many prompts)",
     "SAM3NineSlice": "Detect 9-Slice Borders",
     "SAM3PackAssets": "Pack Assets For Download",
+    "SAM3ReconstructScore": "Score Asset Reconstruction",
     "SAM3BatchCropToObjects": "Crop SAM3 Batch To Objects",
     "SAM3MergeMaskBatch": "Merge SAM3 Mask Batch",
     "SAM3SelectionOverlay": "Overlay SAM3 Selection",
