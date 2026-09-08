@@ -241,7 +241,7 @@ def claim_changed(masks, changed, cap=64):
     return [mask | (reachable & (owner == index)) for index, mask in enumerate(masks)]
 
 
-def solve_layer_sprite(source, under, support, alpha, floor=0.50, exact_tol=6.0):
+def solve_layer_sprite(source, under, support, alpha, floor=0.50, exact_tol=2.0):
     """Express what a peel removed as RGBA that composites back over the peel's own result.
 
     Estimating "what is behind this element" was always a guess, and the guess had to agree

@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 9
+BUILD = 10
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -1160,7 +1160,7 @@ class SAM3CropToRGBA:
                 "under": ("IMAGE",),
                 "under_thresh": ("FLOAT", {"default": 4.0, "min": 0.5, "max": 64.0, "step": 0.5}),
                 "under_cap": ("INT", {"default": 64, "min": 1, "max": 512, "step": 1}),
-                "under_exact": ("FLOAT", {"default": 6.0, "min": 0.0, "max": 64.0, "step": 0.5}),
+                "under_exact": ("FLOAT", {"default": 2.0, "min": 0.0, "max": 64.0, "step": 0.5}),
                 "meta_json": ("STRING", {"forceInput": True}),
             },
         }
@@ -1248,7 +1248,7 @@ class SAM3CropToRGBA:
              align_siblings=True, align_tolerance=0.12,
              defringe=True, defringe_floor=0.80, halo=True, halo_grow=5,
              halo_reach=18, halo_thresh=13.0, under=None, under_thresh=4.0,
-             under_cap=64, under_exact=6.0, meta_json=""):
+             under_cap=64, under_exact=2.0, meta_json=""):
         import cv2
         import numpy as np
 
@@ -1660,8 +1660,19 @@ class SAM3ReconstructScore:
                 alpha = patch[..., 3:4]
                 canvas[y1:y2, x1:x2] = patch[..., :3] * alpha + canvas[y1:y2, x1:x2] * (1.0 - alpha)
                 painted[y1:y2, x1:x2] |= alpha[..., 0] > 0.5
+                # Does this sprite on its own still look like the screen it came from? A
+                # rebuilt screen can be pixel-perfect while an individual asset is unusable:
+                # what a peel invents under a child is exactly what the child covers again.
+                # Comparing each sprite's own opaque pixels against the source separates the
+                # two, and a leaf - which has nothing peeled out of it - has to come out at 1.
+                solid = patch[..., 3] > 0.99
+                real = None
+                if solid.any():
+                    departure = np.abs(patch[..., :3] - source[y1:y2, x1:x2]).max(axis=2)
+                    real = float((departure[solid] <= tol).mean())
                 placed.append({"uid": info.get("uid") or f"L{slot}_{index + 1}",
                                "layer": info.get("layer", slot), "label": info.get("label"),
+                               "real": real, "solid": int(solid.sum()),
                                "box": (x1, y1, x2, y2)})
 
         error = np.abs(canvas - source)
@@ -1680,8 +1691,23 @@ class SAM3ReconstructScore:
             per_element.append({"uid": item["uid"], "layer": item["layer"],
                                 "label": item["label"],
                                 "within": round(float((region <= tol).mean()), 4),
+                                "real": None if item["real"] is None else round(item["real"], 4),
                                 "mae": round(float(error[y1:y2, x1:x2].mean() * 255), 2)})
         per_element.sort(key=lambda r: r["within"])
+
+        by_layer, worst_assets = {}, []
+        for item in placed:
+            if item["real"] is None or item["solid"] < 64:
+                continue
+            bucket = by_layer.setdefault(int(item["layer"] or 0), [0, 0])
+            bucket[0] += item["real"] * item["solid"]
+            bucket[1] += item["solid"]
+            worst_assets.append({"uid": item["uid"], "label": item["label"],
+                                 "layer": item["layer"], "real": round(item["real"], 4),
+                                 "solid": item["solid"]})
+        worst_assets.sort(key=lambda r: r["real"])
+        asset_real = {str(k): round(v[0] / max(1, v[1]), 4) for k, v in sorted(by_layer.items())}
+        total = [sum(v[0] for v in by_layer.values()), sum(v[1] for v in by_layer.values())]
 
         report = {
             "build": BUILD,
@@ -1696,7 +1722,14 @@ class SAM3ReconstructScore:
             "soft_of_alpha": round(soft / max(1, alpha_area), 4),
             "alpha_px_per_screen": round(alpha_area / float(height * width), 3),
             "sprites": len(placed),
+            # asset_real answers a different question from score: not "does the rebuild match"
+            # but "does each sprite on its own still look like the screen". Layer 1 should sit
+            # at 1.0; a low figure on a container is peeled children, and a low figure that is
+            # larger than what the children cover is a fill that came out as mush.
+            "asset_real": round(total[0] / max(1, total[1]), 4),
+            "asset_real_by_layer": asset_real,
             "worst": per_element[:15],
+            "worst_assets": worst_assets[:15],
         }
         payload = json.dumps(report, ensure_ascii=False, indent=1)
 
