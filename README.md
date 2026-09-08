@@ -58,6 +58,41 @@ D:\ComfyUI\python_embeded\python.exe -m pip install -r D:\ComfyUI\ComfyUI\custom
 - **Deterministic UI Inpaint** 新增 `interp` 方法（預設）：邊緣感知線性插值＋內部平滑，
   `grow` / `shadow_reach` 讓反鋸齒邊與軟陰影一起被移除；`bg_std_max` / `max_expand` 防止吃到框線或按鈕光澤。
 
+### V7 還原度：把切出來的素材貼回去,量它還原多少
+
+以前只能看預覽圖判斷切得好不好。V7 把每張 sprite 依座標貼回背景上重畫整個畫面,
+再跟原始截圖逐像素比較,得到一個數字。
+
+- **Score Asset Reconstruction**（`SAM3ReconstructScore`）：吃原圖、背景與八層 sprite＋座標,
+  輸出重建圖、誤差熱圖與 JSON 報告。`score` 是誤差在 `tolerance`（預設 10/255）以內的像素比例;
+  報告同時給 `score_tight`（2/255）、`mae255`、`psnr`,以及 `opaque_of_alpha`、`alpha_px_per_screen`
+  這兩個防呆值 —— 只要 sprite 退化成不透明方塊,分數會漂亮但這兩個值會跟著跑掉。
+- **Crop 節點新增 `under` 輸入**：接該層 Deterministic UI Inpaint 的輸出。
+  「元件底下是什麼顏色」以前只能估,而且估出來的還要跟後面補洞節點另一套參數估的結果吻合,
+  不吻合邊緣就錯。補洞結果不是估的 —— 重建時 sprite 底下真的就是它。
+  有了 `under`,Crop 直接量補洞改動了哪些像素、用 `C = a*F + (1-a)*U` 解出顏色,
+  再把 alpha 取成線段 `U → F` 上離原像素最近的點。
+- **陰影跟著元件走**：補洞會把元件連同陰影一起擦掉,但 sprite 以前只切到元件本體,
+  陰影因此兩邊都不見（素材沒有、背景被咬掉一圈）。現在補洞改動的每個像素都指派給
+  **最近**的元件（不是每個附近的元件,否則相鄰按鈕會互相蓋掉共用的間隙)。
+- **解不出來的像素照原樣保留**：這種畫風每個元件都有近黑描邊,而描邊不是任何顏色的混合,
+  線段解不到,以前描邊會被洗淡。現在殘差超過 `under_exact` 就保留原像素並標為不透明 —— 墨線本來就是不透明的。
+- **`feather` 預設改 0**：模糊過的 alpha 不再代表該像素真正的覆蓋率,貼回去就對不上。
+
+實測（三張圖,`tolerance=10`）:
+
+| 圖 | 尺寸 | score | score_tight (2/255) | MAE | PSNR |
+| --- | --- | --- | --- | --- | --- |
+| Cocos 遊戲截圖 | 750x1334 | 99.63% | 97.44% | 0.23 | 38.9 dB |
+| Cocos 遊戲截圖 | 1500x2668 | 99.87% | 98.11% | 0.13 | 42.6 dB |
+| 商城面板 | 752x1344 | 99.60% | 96.17% | 0.29 | 37.4 dB |
+
+同一批素材仍然是真正的挖空圖:101 張 sprite 的 alpha 平均覆蓋率 0.71,
+只有 4 張超過 95%（其中一張是整螢幕背景）。
+
+Pack 節點改為打包 **asset**（下層已剝離）那一份,也就是量出上表數字的那一份。
+`flat` 仍然由各層的 SaveImage 寫到 `output/sam3_out/layerN/flat`。
+
 ### V6 新增 / 強化
 
 - **SAM3 Prompt Bank**：一個節點跑完整份提示詞清單,格式 `名稱 | 提示詞 | 門檻`,一行一個。
@@ -99,8 +134,10 @@ D:\ComfyUI\python_embeded\python.exe -m pip install -r D:\ComfyUI\ComfyUI\custom
 
 `example_workflows/SAM3_4_Prompt_Bank_Auto_Layer_V6.json`
 
-62 個節點。提示詞集中在一個文字框,8 層 z-order,每層輸出 `asset`（乾淨容器）與
+74 個節點。提示詞集中在一個文字框,8 層 z-order,每層輸出 `asset`（乾淨容器）與
 `flat`（原圖外觀）兩份透明 PNG 加座標 JSON。5 張測試圖抓取率 98.3%,單張最低 95%。
+每層的 `asset` 已接上該層補洞結果作為 `under`,最後由 Score Asset Reconstruction
+把素材貼回去重畫並輸出還原度（實測 99.6%,見上表）。
 
 ### V5 通用自動分層（舊版）
 
