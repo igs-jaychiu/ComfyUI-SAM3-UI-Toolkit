@@ -1128,7 +1128,9 @@ class SAM3CropToRGBA:
                 "image": ("IMAGE",),
                 "masks": ("MASK",),
                 "padding": ("INT", {"default": 2, "min": 0, "max": 256, "step": 1}),
-                "feather": ("INT", {"default": 1, "min": 0, "max": 16, "step": 1}),
+                # a blurred alpha no longer states the coverage the pixel actually had, so the
+                # sprite stops compositing back to what it was cut from; off by default
+                "feather": ("INT", {"default": 0, "min": 0, "max": 16, "step": 1}),
                 "coords_prefix": ("STRING", {"default": "", "multiline": False}),
                 "layer": ("INT", {"default": 0, "min": 0, "max": 8, "step": 1}),
                 "matte": (["difference", "off"],),
@@ -1143,6 +1145,12 @@ class SAM3CropToRGBA:
                 "defringe_floor": ("FLOAT", {"default": 0.80, "min": 0.02, "max": 0.99, "step": 0.01}),
                 "matte_min_coverage": ("FLOAT", {"default": 0.40, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "matte_tight_edge": ("FLOAT", {"default": 0.90, "min": 0.0, "max": 5.0, "step": 0.05}),
+                # match the inpaint's grow / shadow_reach so the sprite carries exactly the
+                # margin the peel is about to erase
+                "halo": ("BOOLEAN", {"default": True}),
+                "halo_grow": ("INT", {"default": 5, "min": 0, "max": 64, "step": 1}),
+                "halo_reach": ("INT", {"default": 18, "min": 0, "max": 128, "step": 1}),
+                "halo_thresh": ("FLOAT", {"default": 13.0, "min": 1.0, "max": 128.0, "step": 0.5}),
                 "meta_json": ("STRING", {"forceInput": True}),
             },
         }
@@ -1213,11 +1221,12 @@ class SAM3CropToRGBA:
                 used.add(m)
         return groups
 
-    def crop(self, image, masks, padding=2, feather=1, coords_prefix="", layer=0,
+    def crop(self, image, masks, padding=2, feather=0, coords_prefix="", layer=0,
              matte="difference", matte_low=0.10, matte_high=0.35,
              matte_min_coverage=0.40, matte_tight_edge=0.90,
              align_siblings=True, align_tolerance=0.12,
-             defringe=True, defringe_floor=0.80, meta_json=""):
+             defringe=True, defringe_floor=0.80, halo=True, halo_grow=5,
+             halo_reach=18, halo_thresh=13.0, meta_json=""):
         import cv2
         import numpy as np
 
@@ -1234,7 +1243,15 @@ class SAM3CropToRGBA:
                 meta_rows = json.loads(meta_json).get(f"layer_{int(layer)}", [])
             except (TypeError, ValueError, AttributeError):
                 meta_rows = []
-        boxes = [auto_filter.bbox(m) for m in bool_masks]
+        # The peel erases each element together with its shadow, so the sprite has to be cut
+        # wide enough to carry that shadow away with it - otherwise it is lost from the asset
+        # and bitten out of the background underneath.
+        regions = list(bool_masks)
+        if halo and int(halo_reach) > 0:
+            regions = [auto_filter.shadow_grow(rgb, m, reach=int(halo_reach),
+                                               thresh=float(halo_thresh), base=int(halo_grow))
+                       for m in bool_masks]
+        boxes = [auto_filter.bbox(r) for r in regions]
         target = {}
         if align_siblings:
             by_uid = self._sibling_sizes_global(meta_json, float(align_tolerance)) if meta_json else {}
@@ -1293,6 +1310,15 @@ class SAM3CropToRGBA:
                             colour, alpha.astype(np.float32) / 255.0,
                             background[sy1:sy2, sx1:sx2], float(defringe_floor))
                         alpha = (solved_alpha * 255.0).round().astype(np.uint8)
+            if halo and int(halo_reach) > 0:
+                soft, shade = auto_filter.halo_alpha(rgb, mask, regions[index - 1],
+                                                     reach=int(halo_reach))
+                if soft is not None:
+                    window = (soft[y1:y2, x1:x2] * 255.0).round().astype(np.uint8)
+                    take = window > alpha
+                    alpha = np.where(take, window, alpha)
+                    colour = np.where(take[..., None], shade[y1:y2, x1:x2].astype(np.uint8),
+                                      colour)
             rgba = np.dstack([colour, alpha]).astype(np.float32) / 255.0
             images.append(torch.from_numpy(rgba).to(dtype=image.dtype, device=image.device).unsqueeze(0))
             record = {"index": index, "x": x1, "y": y1, "w": x2 - x1, "h": y2 - y1}
