@@ -1289,9 +1289,10 @@ class SAM3CropToRGBA:
                     sy1, sy2 = y1 - by1, y2 - by1
                     sx1, sx2 = x1 - bx1, x2 - bx1
                     if 0 <= sy1 and 0 <= sx1 and sy2 <= background.shape[0] and sx2 <= background.shape[1]:
-                        colour = auto_filter.unmix_foreground(
+                        colour, solved_alpha = auto_filter.unmix_foreground(
                             colour, alpha.astype(np.float32) / 255.0,
                             background[sy1:sy2, sx1:sx2], float(defringe_floor))
+                        alpha = (solved_alpha * 255.0).round().astype(np.uint8)
             rgba = np.dstack([colour, alpha]).astype(np.float32) / 255.0
             images.append(torch.from_numpy(rgba).to(dtype=image.dtype, device=image.device).unsqueeze(0))
             record = {"index": index, "x": x1, "y": y1, "w": x2 - x1, "h": y2 - y1}

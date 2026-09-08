@@ -969,22 +969,29 @@ def estimate_background(image, mask, pad=6):
 
 
 def unmix_foreground(rgb, alpha, background, alpha_floor=0.80):
-    """Recover the object's own colour from a composited edge.
+    """Recover the object's own colour from a composited edge, and the alpha that goes with it.
 
     Every partly transparent pixel is a blend: C = a*F + (1-a)*B. Cutting a sprite by simply
     pairing the source pixels with an alpha keeps B in the result, which is the halo you see
     around an extracted button - the old page colour still sitting on its rim. Solving for F
     removes it. Below `alpha_floor` the division is too ill-conditioned to trust, so those
     pixels take their colour from the nearest reliable neighbour instead.
+
+    Borrowing a neighbour's colour leaves the pair (F, a) no longer able to reproduce C, which
+    is why a rebuilt screen used to show every sprite outlined. So once the colours are settled,
+    alpha is re-solved as the point on the segment B -> F that lands closest to the pixel that
+    was actually there. The rim then both loses its halo and composites back to the original.
     """
     a = alpha.astype(np.float32)
     if a.max() <= 0:
-        return rgb
+        return rgb, alpha
     a3 = a[..., None]
+    source = rgb.astype(np.float32)
+    back = background.astype(np.float32)
     reliable = a >= alpha_floor
-    fore = rgb.astype(np.float32).copy()
+    fore = source.copy()
     with np.errstate(divide="ignore", invalid="ignore"):
-        solved = (rgb.astype(np.float32) - (1.0 - a3) * background) / np.maximum(a3, 1e-6)
+        solved = (source - (1.0 - a3) * back) / np.maximum(a3, 1e-6)
     solved = np.clip(solved, 0.0, 255.0)
     fore[reliable] = solved[reliable]
 
@@ -993,4 +1000,15 @@ def unmix_foreground(rgb, alpha, background, alpha_floor=0.80):
     if unknown.any() and reliable.any():
         fore = cv2.inpaint(fore.astype(np.uint8), unknown.astype(np.uint8) * 255, 3,
                            cv2.INPAINT_TELEA).astype(np.float32)
-    return np.clip(fore, 0, 255).astype(np.uint8)
+
+    edge = (a > 0.0) & (a < 1.0)
+    if edge.any():
+        span = fore - back
+        denom = (span * span).sum(axis=2)
+        numer = ((source - back) * span).sum(axis=2)
+        # where the object colour and what is behind it agree there is no ratio to recover,
+        # so those pixels keep the alpha the matte gave them
+        usable = edge & (denom > 4.0)
+        projected = np.divide(numer, denom, out=a.copy(), where=usable)
+        a = np.where(usable, np.clip(projected, 0.0, 1.0), a)
+    return np.clip(fore, 0, 255).astype(np.uint8), a
