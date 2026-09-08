@@ -494,6 +494,14 @@ def periodic_fill(image, hole, tol=20.0, min_overlap=200, block=96, max_span=200
             usable = todo & shifted_known & inside
             if not usable.any():
                 continue
+            # The hole is meant to come out empty. An offset can satisfy the boundary band and
+            # still be sourcing content - the other line of text on the same plate - so refuse
+            # a source that is markedly busier than the surround the hole sits in.
+            if band.any():
+                busy = float(shifted[usable].std(axis=0).mean())
+                calm = float(sub[band].std(axis=0).mean())
+                if busy > calm * 1.8 + 4.0:
+                    continue
             sub[usable] = shifted[usable]
             known = known | usable          # a filled pixel can source the next offset
             todo &= ~usable
