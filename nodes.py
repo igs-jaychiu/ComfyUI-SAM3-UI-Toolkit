@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 6
+BUILD = 7
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -1159,6 +1159,7 @@ class SAM3CropToRGBA:
                 # sprite is solved to be exactly what the peel took away.
                 "under": ("IMAGE",),
                 "under_thresh": ("FLOAT", {"default": 4.0, "min": 0.5, "max": 64.0, "step": 0.5}),
+                "under_cap": ("INT", {"default": 64, "min": 1, "max": 512, "step": 1}),
                 "meta_json": ("STRING", {"forceInput": True}),
             },
         }
@@ -1246,7 +1247,7 @@ class SAM3CropToRGBA:
              align_siblings=True, align_tolerance=0.12,
              defringe=True, defringe_floor=0.80, halo=True, halo_grow=5,
              halo_reach=18, halo_thresh=13.0, under=None, under_thresh=4.0,
-             meta_json=""):
+             under_cap=64, meta_json=""):
         import cv2
         import numpy as np
 
@@ -1271,16 +1272,11 @@ class SAM3CropToRGBA:
             peeled = None
         regions = list(bool_masks)
         if peeled is not None:
-            # What the peel changed is not a guess: measure it. Another element of the same
-            # layer also shows up in that difference, so its own mask is fenced off.
+            # What the peel changed is not a guess: measure it, then hand every changed pixel
+            # to the element nearest to it so the claims cover that area exactly once.
             changed = np.abs(rgb.astype(np.float32)
                              - peeled.astype(np.float32)).max(axis=2) > float(under_thresh)
-            union = np.zeros((height, width), bool)
-            for m in bool_masks:
-                union |= m
-            reach = max(1, int(halo_reach))
-            regions = [m | (auto_filter.grow(m, reach) & changed & ~(union & ~m))
-                       for m in bool_masks]
+            regions = auto_filter.claim_changed(bool_masks, changed, cap=int(under_cap))
         elif halo and int(halo_reach) > 0:
             regions = [auto_filter.shadow_grow(rgb, m, reach=int(halo_reach),
                                                thresh=float(halo_thresh), base=int(halo_grow))

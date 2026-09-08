@@ -218,6 +218,29 @@ def shadow_grow(image, mask, reach=24, thresh=14.0, base=3, bg_std_max=30.0, max
     return out
 
 
+def claim_changed(masks, changed, cap=64):
+    """Give every pixel a peel touched to exactly one of the elements it removed.
+
+    Two neighbouring buttons share the gap between them, and both of their shadows land in it.
+    Handing that gap to both means the second sprite paints over the first and neither lands
+    where it should, while capping the reach at a fixed radius leaves the outer part of a large
+    element's shadow belonging to nobody at all. Nearest element wins instead, so the claims
+    tile the changed area exactly once.
+    """
+    if not masks:
+        return []
+    height, width = changed.shape
+    best = np.full((height, width), np.inf, np.float32)
+    owner = np.full((height, width), -1, np.int16)
+    for index, mask in enumerate(masks):
+        distance = cv2.distanceTransform((~mask).astype(np.uint8), cv2.DIST_L2, 3)
+        closer = distance < best
+        best = np.where(closer, distance, best)
+        owner = np.where(closer, np.int16(index), owner)
+    reachable = changed & (best <= float(cap))
+    return [mask | (reachable & (owner == index)) for index, mask in enumerate(masks)]
+
+
 def solve_layer_sprite(source, under, support, alpha, floor=0.50):
     """Express what a peel removed as RGBA that composites back over the peel's own result.
 
