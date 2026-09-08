@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 10
+BUILD = 11
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -1672,7 +1672,7 @@ class SAM3ReconstructScore:
                     real = float((departure[solid] <= tol).mean())
                 placed.append({"uid": info.get("uid") or f"L{slot}_{index + 1}",
                                "layer": info.get("layer", slot), "label": info.get("label"),
-                               "real": real, "solid": int(solid.sum()),
+                               "real": real, "solid": int(solid.sum()), "solid_mask": solid,
                                "box": (x1, y1, x2, y2)})
 
         error = np.abs(canvas - source)
@@ -1695,19 +1695,46 @@ class SAM3ReconstructScore:
                                 "mae": round(float(error[y1:y2, x1:x2].mean() * 255), 2)})
         per_element.sort(key=lambda r: r["within"])
 
+        # A container is *supposed* to have its children's pixels replaced - that is what makes
+        # it reusable. What is not supposed to happen is the fill spreading past them. Walking
+        # the layers finest-first gives, for each element, how much of it the finer layers
+        # actually cover, and the invented area beyond that is fill nobody asked for.
+        finer = np.zeros((height, width), bool)
+        for layer in sorted({int(i["layer"] or 0) for i in placed}):
+            for item in placed:
+                if int(item["layer"] or 0) != layer:
+                    continue
+                x1, y1, x2, y2 = item["box"]
+                own = item["solid_mask"]
+                item["covered"] = (float((finer[y1:y2, x1:x2] & own).sum() / item["solid"])
+                                   if item["solid"] else 0.0)
+            for item in placed:
+                if int(item["layer"] or 0) != layer:
+                    continue
+                x1, y1, x2, y2 = item["box"]
+                finer[y1:y2, x1:x2] |= item["solid_mask"]
+
         by_layer, worst_assets = {}, []
         for item in placed:
             if item["real"] is None or item["solid"] < 64:
                 continue
-            bucket = by_layer.setdefault(int(item["layer"] or 0), [0, 0])
+            invented = 1.0 - item["real"]
+            unexplained = max(0.0, invented - item.get("covered", 0.0))
+            bucket = by_layer.setdefault(int(item["layer"] or 0), [0, 0, 0])
             bucket[0] += item["real"] * item["solid"]
             bucket[1] += item["solid"]
+            bucket[2] += unexplained * item["solid"]
             worst_assets.append({"uid": item["uid"], "label": item["label"],
                                  "layer": item["layer"], "real": round(item["real"], 4),
+                                 "covered": round(item.get("covered", 0.0), 4),
+                                 "unexplained": round(unexplained, 4),
                                  "solid": item["solid"]})
-        worst_assets.sort(key=lambda r: r["real"])
+        worst_assets.sort(key=lambda r: -r["unexplained"])
         asset_real = {str(k): round(v[0] / max(1, v[1]), 4) for k, v in sorted(by_layer.items())}
-        total = [sum(v[0] for v in by_layer.values()), sum(v[1] for v in by_layer.values())]
+        unexplained_by_layer = {str(k): round(v[2] / max(1, v[1]), 4)
+                                for k, v in sorted(by_layer.items())}
+        total = [sum(v[0] for v in by_layer.values()), sum(v[1] for v in by_layer.values()),
+                 sum(v[2] for v in by_layer.values())]
 
         report = {
             "build": BUILD,
@@ -1728,6 +1755,8 @@ class SAM3ReconstructScore:
             # larger than what the children cover is a fill that came out as mush.
             "asset_real": round(total[0] / max(1, total[1]), 4),
             "asset_real_by_layer": asset_real,
+            "asset_unexplained": round(total[2] / max(1, total[1]), 4),
+            "asset_unexplained_by_layer": unexplained_by_layer,
             "worst": per_element[:15],
             "worst_assets": worst_assets[:15],
         }
