@@ -241,7 +241,7 @@ def claim_changed(masks, changed, cap=64):
     return [mask | (reachable & (owner == index)) for index, mask in enumerate(masks)]
 
 
-def solve_layer_sprite(source, under, support, alpha, floor=0.50):
+def solve_layer_sprite(source, under, support, alpha, floor=0.50, exact_tol=6.0):
     """Express what a peel removed as RGBA that composites back over the peel's own result.
 
     Estimating "what is behind this element" was always a guess, and the guess had to agree
@@ -274,6 +274,19 @@ def solve_layer_sprite(source, under, support, alpha, floor=0.50):
     projected = np.divide(numer, denom, out=a.copy(), where=usable)
     out = np.where(usable, np.clip(projected, 0.0, 1.0), a)
     out[~support] = 0.0
+
+    # In this art style every element is drawn with a near-black ink outline, and an outline is
+    # not a blend of anything: no mix of the fill colour and the plate behind it lands on it, so
+    # the segment cannot reach and the stroke came back washed out. Wherever the decomposition
+    # cannot explain the pixel it was, keep that pixel as it was and call it opaque - which is
+    # what an ink outline is.
+    if exact_tol > 0:
+        blended = out[..., None] * fore + (1.0 - out[..., None]) * below
+        residual = np.abs(blended - colour).max(axis=2)
+        force = support & (residual > float(exact_tol))
+        if force.any():
+            fore = np.where(force[..., None], colour, fore)
+            out = np.where(force, 1.0, out)
     return np.clip(fore, 0, 255).astype(np.uint8), out
 
 

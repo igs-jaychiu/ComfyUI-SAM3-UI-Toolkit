@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 7
+BUILD = 8
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -1160,6 +1160,7 @@ class SAM3CropToRGBA:
                 "under": ("IMAGE",),
                 "under_thresh": ("FLOAT", {"default": 4.0, "min": 0.5, "max": 64.0, "step": 0.5}),
                 "under_cap": ("INT", {"default": 64, "min": 1, "max": 512, "step": 1}),
+                "under_exact": ("FLOAT", {"default": 6.0, "min": 0.0, "max": 64.0, "step": 0.5}),
                 "meta_json": ("STRING", {"forceInput": True}),
             },
         }
@@ -1247,7 +1248,7 @@ class SAM3CropToRGBA:
              align_siblings=True, align_tolerance=0.12,
              defringe=True, defringe_floor=0.80, halo=True, halo_grow=5,
              halo_reach=18, halo_thresh=13.0, under=None, under_thresh=4.0,
-             under_cap=64, meta_json=""):
+             under_cap=64, under_exact=6.0, meta_json=""):
         import cv2
         import numpy as np
 
@@ -1333,7 +1334,8 @@ class SAM3CropToRGBA:
             if peeled is not None:
                 colour, solved_alpha = auto_filter.solve_layer_sprite(
                     source, peeled[y1:y2, x1:x2], region[y1:y2, x1:x2],
-                    alpha.astype(np.float32) / 255.0, float(defringe_floor))
+                    alpha.astype(np.float32) / 255.0, float(defringe_floor),
+                    float(under_exact))
                 alpha = (solved_alpha * 255.0).round().astype(np.uint8)
                 rgba = np.dstack([colour, alpha]).astype(np.float32) / 255.0
                 images.append(torch.from_numpy(rgba).to(dtype=image.dtype,
