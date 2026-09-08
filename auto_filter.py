@@ -362,6 +362,148 @@ def _interp_axis(sub, comp, known, axis, sim_scale):
     return fill, weight
 
 
+def _repeat_offsets(known, sub, limit, count=12):
+    """Offsets at which this patch of texture repeats, best first.
+
+    Autocorrelation of the known pixels finds the lattice a UI background is drawn on - a grid
+    of board squares, a wallpaper of paw prints, a run of planks - without knowing anything
+    about what is drawn.
+    """
+    grey = sub.mean(axis=2).astype(np.float32)
+    grey = np.where(known, grey - grey[known].mean(), 0.0)
+    spectrum = np.fft.rfft2(grey)
+    power = np.fft.irfft2(spectrum * np.conj(spectrum), s=grey.shape).real
+    power = np.fft.fftshift(power)
+    height, width = power.shape
+    cy, cx = height // 2, width // 2
+    reach = int(min(limit, min(cy, cx)))
+    if reach < 4:
+        return []
+    y0, x0 = cy - reach, cx - reach
+    window = power[y0:cy + reach + 1, x0:cx + reach + 1].copy()
+    # an even-sized axis leaves the centre off by one, so the offsets come from the real slice
+    yy, xx = np.mgrid[y0 - cy:y0 - cy + window.shape[0], x0 - cx:x0 - cx + window.shape[1]]
+    window[(np.abs(yy) < 3) & (np.abs(xx) < 3)] = -np.inf     # the origin is not a period
+    order = np.argsort(window.ravel())[::-1][:count * 4]
+    seen, offsets = set(), []
+    for flat in order:
+        dy, dx = int(yy.ravel()[flat]), int(xx.ravel()[flat])
+        key = (abs(dy) // 2, abs(dx) // 2)
+        if key in seen:
+            continue
+        seen.add(key)
+        offsets.append((dy, dx))
+        if len(offsets) >= count:
+            break
+    return offsets
+
+
+def _fill_pieces(hole, block=96):
+    """Work list for periodic_fill: connected components, big ones cut into blocks.
+
+    One offset for a whole large hole has to be right everywhere in it, and it never is - the
+    band around it matches while the middle of the source sits on some neighbouring sprite, so
+    a cat lands in the middle of the board. Cut into blocks, each piece picks its own offset and
+    is judged on its own short boundary, which is a test that means something.
+    """
+    pieces = []
+    count, labels = cv2.connectedComponents(hole.astype(np.uint8), connectivity=8)
+    for label in range(1, count):
+        component = labels == label
+        box = bbox(component)
+        if box is None:
+            continue
+        x1, y1, x2, y2 = box
+        if max(x2 - x1, y2 - y1) <= block * 1.5:
+            pieces.append(component)
+            continue
+        for by in range(y1, y2, block):
+            for bx in range(x1, x2, block):
+                piece = np.zeros_like(component)
+                piece[by:by + block, bx:bx + block] = component[by:by + block, bx:bx + block]
+                if piece.any():
+                    pieces.append(piece)
+    return pieces
+
+
+def periodic_fill(image, hole, tol=20.0, min_overlap=200, block=96, max_span=200):
+    """Fill a hole by copying the texture that repeats around it.
+
+    Linear interpolation across a hole is right for a flat panel and wrong for anything with a
+    pattern: a board of squares comes back as a smear. Nothing has to be invented here - the
+    same texture is almost always present a period away, so it is copied rather than guessed,
+    which keeps the peel deterministic. Returns (filled, remaining_hole).
+    """
+    out = image.astype(np.float32).copy()
+    remaining = hole.copy()
+    height, width = hole.shape
+    for component in _fill_pieces(hole, block):
+        box = bbox(component)
+        if box is None:
+            continue
+        x1, y1, x2, y2 = box
+        span = max(x2 - x1, y2 - y1)
+        if max_span and span > max_span:
+            # Measured on punched-out background: beyond this the copy stops beating plain
+            # interpolation, because an interior block has no trusted boundary left to judge it.
+            continue
+        pad = int(max(32, span * 2.0))
+        X1, Y1 = max(0, x1 - pad), max(0, y1 - pad)
+        X2, Y2 = min(width, x2 + pad), min(height, y2 + pad)
+        sub = out[Y1:Y2, X1:X2]
+        comp = component[Y1:Y2, X1:X2]
+        # blocks filled earlier are fair game as sources, so the copy can march across a hole
+        known = ~remaining[Y1:Y2, X1:X2]
+        if known.sum() < min_overlap or comp.sum() == 0:
+            continue
+        todo = comp.copy()
+        # Sourcing may use pixels this loop has already filled, but judging an offset may not:
+        # scoring against its own output makes every offset look perfect. Judge it on the band
+        # hugging the hole, too - a whole-window score passes an offset that happens to land
+        # its source on a neighbouring sprite, and then a cat gets copied into the board.
+        trusted = ~hole[Y1:Y2, X1:X2]
+        band = grow(comp, 6) & ~comp & trusted
+        offsets = _repeat_offsets(known, sub, limit=pad + span)
+        # A wide hole cannot be reached in one step: the texture a period away is itself still
+        # missing near the middle. Sweeping the offsets again lets the filled edge become the
+        # source for the next ring inwards, so the copy marches in from all sides.
+        for dy, dx in [o for _ in range(3) for o in offsets]:
+            if not todo.any():
+                break
+            shifted = np.roll(np.roll(sub, dy, axis=0), dx, axis=1)
+            shifted_known = np.roll(np.roll(known, dy, axis=0), dx, axis=1)
+            # rolling wraps, so only trust the part that did not come round the edge
+            inside = np.ones_like(known)
+            if dy > 0:
+                inside[:dy] = False
+            elif dy < 0:
+                inside[dy:] = False
+            if dx > 0:
+                inside[:, :dx] = False
+            elif dx < 0:
+                inside[:, dx:] = False
+            shifted_trusted = np.roll(np.roll(trusted, dy, axis=0), dx, axis=1)
+            agree = trusted & shifted_trusted & inside
+            close = band & shifted_trusted & inside
+            if agree.sum() < min_overlap or close.sum() < 60:
+                continue
+            error = float(np.abs(sub[agree] - shifted[agree]).max(axis=1).mean())
+            edge = float(np.abs(sub[close] - shifted[close]).max(axis=1).mean())
+            if error > tol or edge > tol:
+                continue
+            usable = todo & shifted_known & inside
+            if not usable.any():
+                continue
+            sub[usable] = shifted[usable]
+            known = known | usable          # a filled pixel can source the next offset
+            todo &= ~usable
+        filled = comp & ~todo
+        if filled.any():
+            out[Y1:Y2, X1:X2] = sub
+            remaining[Y1:Y2, X1:X2] &= ~filled
+    return out, remaining
+
+
 def inpaint_interp(image, mask, blur=True, blur_scale=0.25, sim_scale=12.0, blur_max=41):
     """Edge-aware bidirectional linear interpolation per connected component, then interior smoothing.
 

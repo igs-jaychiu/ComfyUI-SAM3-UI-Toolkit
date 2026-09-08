@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 11
+BUILD = 12
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -1423,6 +1423,11 @@ class SAM3DeterministicInpaint:
                 "sim_scale": ("FLOAT", {"default": 12.0, "min": 1.0, "max": 128.0, "step": 0.5}),
                 "blur_scale": ("FLOAT", {"default": 0.25, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "blur_max": ("INT", {"default": 41, "min": 3, "max": 255, "step": 2}),
+                # Copy repeating texture into the hole before anything has to be made up.
+                "periodic": ("BOOLEAN", {"default": True}),
+                "periodic_tol": ("FLOAT", {"default": 20.0, "min": 1.0, "max": 96.0, "step": 0.5}),
+                "periodic_block": ("INT", {"default": 96, "min": 16, "max": 512, "step": 8}),
+                "periodic_max_span": ("INT", {"default": 200, "min": 0, "max": 2048, "step": 8}),
             },
         }
 
@@ -1496,7 +1501,8 @@ class SAM3DeterministicInpaint:
 
     def inpaint(self, image, masks, method="interp", radius=5, gradient_ring=20, grow=0,
                 shadow_reach=0, shadow_thresh=14.0, bg_std_max=30.0, max_expand=0.6,
-                sim_scale=12.0, blur_scale=0.25, blur_max=41, auto_scale=False):
+                sim_scale=12.0, blur_scale=0.25, blur_max=41, auto_scale=False,
+                periodic=True, periodic_tol=20.0, periodic_block=96, periodic_max_span=200):
         import cv2
         import numpy as np
 
@@ -1528,15 +1534,28 @@ class SAM3DeterministicInpaint:
             if not fill.any():
                 outputs.append(source)
                 continue
-            if method == "gradient":
-                filled = self._gradient_fill(rgb, (fill.astype(np.uint8) * 255), int(gradient_ring))
+            # Copy the texture that repeats around each hole before falling back to a method
+            # that has to make something up. A board of squares or a wallpaper of paw prints
+            # comes back as itself instead of a smear, and nothing is invented.
+            base, todo = rgb, fill
+            if periodic:
+                stage, left = auto_filter.periodic_fill(
+                    rgb, fill, tol=float(periodic_tol), block=int(periodic_block),
+                    max_span=int(periodic_max_span))
+                base = np.clip(stage, 0, 255).astype(np.uint8)
+                todo = left
+            if not todo.any():
+                filled = base
+            elif method == "gradient":
+                filled = self._gradient_fill(base, (todo.astype(np.uint8) * 255),
+                                             int(gradient_ring))
             elif method == "interp":
                 filled = auto_filter.inpaint_interp(
-                    rgb, fill, True, float(blur_scale), float(sim_scale), int(blur_max)
+                    base, todo, True, float(blur_scale), float(sim_scale), int(blur_max)
                 )
             else:
                 flag = cv2.INPAINT_TELEA if method == "telea" else cv2.INPAINT_NS
-                filled = cv2.inpaint(rgb, (fill.astype(np.uint8) * 255), float(radius), flag)
+                filled = cv2.inpaint(base, (todo.astype(np.uint8) * 255), float(radius), flag)
             generated = torch.from_numpy(filled.astype(np.float32) / 255.0).to(
                 dtype=image.dtype, device=image.device
             )
