@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 8
+BUILD = 9
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -1620,6 +1620,10 @@ class SAM3ReconstructScore:
             canvas = np.full_like(source, 0.5)
         painted = np.zeros((height, width), bool)
 
+        # A perfect rebuild is also what you get by cutting one opaque sprite per screen, so the
+        # shape of the alpha is reported next to the score: if these move, the sprites stopped
+        # being cut-outs and the score stopped meaning anything.
+        opaque = soft = alpha_area = 0
         placed = []
         # Bottom-up: the panel a button sits on is a higher layer, so it has to go down first.
         for slot in range(self.SLOTS, 0, -1):
@@ -1648,6 +1652,10 @@ class SAM3ReconstructScore:
                 x1, y1 = max(0, x), max(0, y)
                 if x2 <= x1 or y2 <= y1:
                     continue
+                whole = rgba[..., 3]
+                alpha_area += int((whole > 0.01).sum())
+                opaque += int((whole > 0.99).sum())
+                soft += int(((whole > 0.01) & (whole <= 0.99)).sum())
                 patch = rgba[y1 - y:y2 - y, x1 - x:x2 - x]
                 alpha = patch[..., 3:4]
                 canvas[y1:y2, x1:x2] = patch[..., :3] * alpha + canvas[y1:y2, x1:x2] * (1.0 - alpha)
@@ -1683,6 +1691,10 @@ class SAM3ReconstructScore:
             "mae255": round(mae * 255, 3),
             "psnr": round(psnr, 2),
             "painted_fraction": round(float(painted.mean()), 4),
+            "score_tight": round(float((worst_channel <= 2.0 / 255.0).mean()), 4),
+            "opaque_of_alpha": round(opaque / max(1, alpha_area), 4),
+            "soft_of_alpha": round(soft / max(1, alpha_area), 4),
+            "alpha_px_per_screen": round(alpha_area / float(height * width), 3),
             "sprites": len(placed),
             "worst": per_element[:15],
         }
