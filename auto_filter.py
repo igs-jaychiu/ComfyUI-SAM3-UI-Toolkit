@@ -218,7 +218,7 @@ def shadow_grow(image, mask, reach=24, thresh=14.0, base=3, bg_std_max=30.0, max
     return out
 
 
-def halo_alpha(image, mask, region, reach=24):
+def halo_alpha(image, extra, background):
     """Turn the drop shadow / glow around an element into alpha the sprite can carry.
 
     The inpaint that peels a layer erases the element together with its shadow, but the sprite
@@ -226,21 +226,17 @@ def halo_alpha(image, mask, region, reach=24):
     and the background it was standing on. A shadow is the background seen through something
     dark: C = (1-a)*B, so a = 1 - C/B recovers it exactly, and the mirror form recovers a glow.
     Exported that way the shadow travels with its button and darkens whatever it is dropped on.
+
+    `background` has to be the per-pixel plate, not one averaged colour: a shadow lying across
+    wood grain or a paw-print pattern would otherwise come back as the mean of the texture.
     """
-    extra = region & ~mask
-    if not extra.any():
+    if extra is None or not extra.any():
         return None, None
-    far = grow(mask, reach)
-    ring = far & ~grow(mask, max(1, reach // 2))
-    pixels = image[ring] if ring.sum() >= 20 else image[extra]
-    if pixels.size == 0:
-        return None, None
-    background = np.median(pixels.astype(np.float32), axis=0)
     colour = image.astype(np.float32)
-    darker = np.clip((background - colour) / np.maximum(background, 1.0), 0.0, 1.0).max(axis=2)
-    lighter = np.clip((colour - background) / np.maximum(255.0 - background, 1.0),
-                      0.0, 1.0).max(axis=2)
-    towards_dark = colour.mean(axis=2) <= background.mean()
+    plate = background.astype(np.float32)
+    darker = np.clip((plate - colour) / np.maximum(plate, 1.0), 0.0, 1.0).max(axis=2)
+    lighter = np.clip((colour - plate) / np.maximum(255.0 - plate, 1.0), 0.0, 1.0).max(axis=2)
+    towards_dark = colour.mean(axis=2) <= plate.mean(axis=2)
     alpha = np.where(towards_dark, darker, lighter).astype(np.float32)
     alpha[~extra] = 0.0
     fore = np.where(towards_dark[..., None], 0.0, 255.0).astype(np.float32)

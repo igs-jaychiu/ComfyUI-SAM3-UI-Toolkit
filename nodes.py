@@ -1295,30 +1295,35 @@ class SAM3CropToRGBA:
             if feather > 0:
                 alpha = cv2.GaussianBlur(alpha, (2 * feather + 1, 2 * feather + 1), 0)
 
-            colour = rgb[y1:y2, x1:x2]
-            if defringe:
+            source = rgb[y1:y2, x1:x2]
+            colour = source
+            region = regions[index - 1]
+            # One estimate of what is behind this element serves both jobs below. Taken over the
+            # halo region rather than the mask, it is the clean plate: element and shadow gone.
+            behind = None
+            if defringe or (halo and int(halo_reach) > 0):
+                plate, box = auto_filter.estimate_background(
+                    rgb, region, pad=max(6, int(halo_reach) if halo else 6))
+                if plate is not None:
+                    sy1, sy2 = y1 - box[1], y2 - box[1]
+                    sx1, sx2 = x1 - box[0], x2 - box[0]
+                    if 0 <= sy1 and 0 <= sx1 and sy2 <= plate.shape[0] and sx2 <= plate.shape[1]:
+                        behind = plate[sy1:sy2, sx1:sx2]
+            if defringe and behind is not None:
                 # A partly transparent edge pixel is a blend of the object and whatever was
                 # behind it. Pairing the source colour with an alpha keeps that background on
                 # the rim, which is the halo around an extracted sprite; solve it out.
-                background, region = auto_filter.estimate_background(rgb, mask)
-                if background is not None:
-                    bx1, by1, bx2, by2 = region
-                    sy1, sy2 = y1 - by1, y2 - by1
-                    sx1, sx2 = x1 - bx1, x2 - bx1
-                    if 0 <= sy1 and 0 <= sx1 and sy2 <= background.shape[0] and sx2 <= background.shape[1]:
-                        colour, solved_alpha = auto_filter.unmix_foreground(
-                            colour, alpha.astype(np.float32) / 255.0,
-                            background[sy1:sy2, sx1:sx2], float(defringe_floor))
-                        alpha = (solved_alpha * 255.0).round().astype(np.uint8)
-            if halo and int(halo_reach) > 0:
-                soft, shade = auto_filter.halo_alpha(rgb, mask, regions[index - 1],
-                                                     reach=int(halo_reach))
+                colour, solved_alpha = auto_filter.unmix_foreground(
+                    colour, alpha.astype(np.float32) / 255.0, behind, float(defringe_floor))
+                alpha = (solved_alpha * 255.0).round().astype(np.uint8)
+            if halo and int(halo_reach) > 0 and behind is not None:
+                soft, shade = auto_filter.halo_alpha(source, (region & ~mask)[y1:y2, x1:x2],
+                                                     behind)
                 if soft is not None:
-                    window = (soft[y1:y2, x1:x2] * 255.0).round().astype(np.uint8)
+                    window = (soft * 255.0).round().astype(np.uint8)
                     take = window > alpha
                     alpha = np.where(take, window, alpha)
-                    colour = np.where(take[..., None], shade[y1:y2, x1:x2].astype(np.uint8),
-                                      colour)
+                    colour = np.where(take[..., None], shade.astype(np.uint8), colour)
             rgba = np.dstack([colour, alpha]).astype(np.float32) / 255.0
             images.append(torch.from_numpy(rgba).to(dtype=image.dtype, device=image.device).unsqueeze(0))
             record = {"index": index, "x": x1, "y": y1, "w": x2 - x1, "h": y2 - y1}
