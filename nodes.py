@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 29
+BUILD = 31
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -763,7 +763,7 @@ class SAM3AutoLayerMasks:
                 # the source screen, so each element can be split into the pieces it was drawn
                 # from - a plate, a frame, a strip of tape - which no prompt can ask for
                 "image": ("IMAGE",),
-                "split_parts": ("BOOLEAN", {"default": True}),
+                "split_parts": ("BOOLEAN", {"default": False}),
                 "split_min_frac": ("FLOAT", {"default": 0.05, "min": 0.01, "max": 0.5,
                                              "step": 0.01}),
                 "split_max_parts": ("INT", {"default": 4, "min": 1, "max": 16, "step": 1}),
@@ -778,7 +778,7 @@ class SAM3AutoLayerMasks:
 
     def split(self, masks, dedupe_iou=0.8, contain_ratio=0.85, min_area=40, max_area_frac=0.98,
               min_fill=0.0, min_dim=6, close_holes_from=3, min_votes=2, despeckle_frac=0.06,
-              labels_json="", image=None, split_parts=True, split_min_frac=0.05,
+              labels_json="", image=None, split_parts=False, split_min_frac=0.05,
               split_max_parts=4, split_depth=2):
         if masks.ndim == 2:
             masks = masks.unsqueeze(0)
@@ -1313,6 +1313,13 @@ class SAM3CropToRGBA:
                 # drops the outputs of every node whose shifted value is out of range while
                 # still reporting the run as a success.
                 "under_relative": ("FLOAT", {"default": 0.35, "min": 0.0, "max": 2.0, "step": 0.01}),
+                # make each exported sprite one whole shape: drop stray islands, fill the holes
+                # the matte punched through the middle
+                "tidy": ("BOOLEAN", {"default": True}),
+                "tidy_drop_island": ("FLOAT", {"default": 0.25, "min": 0.0, "max": 0.5, "step": 0.01}),
+                "tidy_fill_hole": ("FLOAT", {"default": 0.15, "min": 0.0, "max": 0.9, "step": 0.01}),
+                # fade the claimed shadow margin out instead of ending it in a straight line
+                "edge_fade": ("INT", {"default": 3, "min": 0, "max": 32, "step": 1}),
                 "meta_json": ("STRING", {"forceInput": True}),
             },
         }
@@ -1400,7 +1407,8 @@ class SAM3CropToRGBA:
              align_siblings=True, align_tolerance=0.12,
              defringe=True, defringe_floor=0.80, halo=True, halo_grow=5,
              halo_reach=18, halo_thresh=13.0, under=None, under_thresh=4.0,
-             under_cap=64, under_relative=0.35, under_exact=2.0, meta_json=""):
+             under_cap=64, under_relative=0.35, under_exact=2.0, tidy=True,
+             tidy_drop_island=0.25, tidy_fill_hole=0.15, edge_fade=3, meta_json=""):
         import cv2
         import numpy as np
 
@@ -1490,6 +1498,14 @@ class SAM3CropToRGBA:
                     alpha.astype(np.float32) / 255.0, float(defringe_floor),
                     float(under_exact))
                 alpha = (solved_alpha * 255.0).round().astype(np.uint8)
+                if int(edge_fade) > 0:
+                    # The claim ends where the peel stopped changing pixels, which is a straight
+                    # line through flat paint - the cut that makes an exported file look torn.
+                    # A shadow fades, so let it.
+                    alpha = auto_filter.fade_margin(alpha, mask[y1:y2, x1:x2], int(edge_fade))
+                if tidy:
+                    alpha = auto_filter.tidy_alpha(alpha, float(tidy_drop_island),
+                                                   float(tidy_fill_hole))
                 rgba = np.dstack([colour, alpha]).astype(np.float32) / 255.0
                 images.append(torch.from_numpy(rgba).to(dtype=image.dtype,
                                                         device=image.device).unsqueeze(0))
@@ -1519,6 +1535,9 @@ class SAM3CropToRGBA:
                     take = window > alpha
                     alpha = np.where(take, window, alpha)
                     colour = np.where(take[..., None], shade.astype(np.uint8), colour)
+            if tidy:
+                alpha = auto_filter.tidy_alpha(alpha, float(tidy_drop_island),
+                                               float(tidy_fill_hole))
             rgba = np.dstack([colour, alpha]).astype(np.float32) / 255.0
             images.append(torch.from_numpy(rgba).to(dtype=image.dtype, device=image.device).unsqueeze(0))
             coords.append(self._record(index, x1, y1, x2, y2, meta_rows))

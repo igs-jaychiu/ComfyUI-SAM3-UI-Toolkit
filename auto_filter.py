@@ -261,6 +261,64 @@ def claim_changed(masks, changed, cap=64, relative=0.0):
     return [mask | (reachable & (owner == index)) for index, mask in enumerate(masks)]
 
 
+def fade_margin(alpha, own, fade=3):
+    """Ramp the claimed margin out instead of cutting it off in a straight line.
+
+    Everything outside the element's own mask is there because the peel changed it - its shadow,
+    its anti-aliased rim. That claim ends abruptly at whatever radius the change stopped, and an
+    abrupt end through flat paint is exactly what reads as a torn file. Weighting the margin down
+    with distance keeps the shadow and loses the line.
+    """
+    if fade <= 0 or not own.any():
+        return alpha
+    outside = ~own
+    distance = cv2.distanceTransform(outside.astype(np.uint8), cv2.DIST_L2, 3)
+    ramp = np.clip(1.0 - (distance - 1.0) / float(fade), 0.0, 1.0)
+    faded = alpha.astype(np.float32)
+    faded[outside] *= ramp[outside]
+    return faded.round().clip(0, 255).astype(alpha.dtype)
+
+
+def tidy_alpha(alpha, drop_island=0.06, fill_hole=0.15):
+    """Make a sprite's alpha one whole shape instead of a torn one.
+
+    Two things make an exported file unusable on its own even when the rebuilt screen looks
+    perfect. A stray island - a few pixels of a neighbour the mask caught - reads as debris and
+    puts the sprite's origin in the wrong place. And a hole punched through the middle, which is
+    what the difference matte leaves when part of an element happens to match what is behind it,
+    reads as a bite taken out of the artwork. Islands far smaller than the body go, holes far
+    smaller than the body are filled back to opaque - the colour underneath them is the element's
+    own, so filling is restoring, not inventing. A real ring or window frame keeps its opening,
+    because that opening is not small.
+    """
+    solid = (alpha > 100).astype(np.uint8)
+    if not solid.any():
+        return alpha
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(solid, connectivity=8)
+    if count > 2:
+        areas = {i: int(stats[i, cv2.CC_STAT_AREA]) for i in range(1, count)}
+        biggest = max(areas.values())
+        keep = {i for i, a in areas.items() if a >= drop_island * biggest}
+        if len(keep) < len(areas):
+            alpha = np.where(np.isin(labels, list(keep)), alpha, 0).astype(alpha.dtype)
+            solid = (alpha > 100).astype(np.uint8)
+    body = int(solid.sum())
+    if body == 0:
+        return alpha
+    padded = np.pad(solid, 1)
+    flood = padded.copy()
+    cv2.floodFill(flood, np.zeros((flood.shape[0] + 2, flood.shape[1] + 2), np.uint8), (0, 0), 2)
+    enclosed = (flood[1:-1, 1:-1] == 0)
+    if enclosed.any():
+        holes, hole_labels, hole_stats, _ = cv2.connectedComponentsWithStats(
+            enclosed.astype(np.uint8), connectivity=8)
+        small = [i for i in range(1, holes)
+                 if int(hole_stats[i, cv2.CC_STAT_AREA]) < fill_hole * body]
+        if small:
+            alpha = np.where(np.isin(hole_labels, small), 255, alpha).astype(alpha.dtype)
+    return alpha
+
+
 def solve_layer_sprite(source, under, support, alpha, floor=0.50, exact_tol=2.0):
     """Express what a peel removed as RGBA that composites back over the peel's own result.
 
