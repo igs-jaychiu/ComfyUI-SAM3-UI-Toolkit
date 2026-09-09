@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 26
+BUILD = 27
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -764,9 +764,10 @@ class SAM3AutoLayerMasks:
                 # from - a plate, a frame, a strip of tape - which no prompt can ask for
                 "image": ("IMAGE",),
                 "split_parts": ("BOOLEAN", {"default": True}),
-                "split_min_frac": ("FLOAT", {"default": 0.10, "min": 0.01, "max": 0.5,
+                "split_min_frac": ("FLOAT", {"default": 0.05, "min": 0.01, "max": 0.5,
                                              "step": 0.01}),
-                "split_max_parts": ("INT", {"default": 2, "min": 1, "max": 16, "step": 1}),
+                "split_max_parts": ("INT", {"default": 4, "min": 1, "max": 16, "step": 1}),
+                "split_depth": ("INT", {"default": 2, "min": 1, "max": 4, "step": 1}),
             },
         }
 
@@ -777,8 +778,8 @@ class SAM3AutoLayerMasks:
 
     def split(self, masks, dedupe_iou=0.8, contain_ratio=0.85, min_area=40, max_area_frac=0.98,
               min_fill=0.0, min_dim=6, close_holes_from=3, min_votes=2, despeckle_frac=0.06,
-              labels_json="", image=None, split_parts=True, split_min_frac=0.10,
-              split_max_parts=2):
+              labels_json="", image=None, split_parts=True, split_min_frac=0.05,
+              split_max_parts=4, split_depth=2):
         if masks.ndim == 2:
             masks = masks.unsqueeze(0)
         size = masks.shape[-2:]
@@ -798,7 +799,7 @@ class SAM3AutoLayerMasks:
             min_votes=int(min_votes), despeckle_frac=float(despeckle_frac),
             image=(_image_to_uint8(image) if image is not None else None),
             split_parts=bool(split_parts), split_min_frac=float(split_min_frac),
-            split_max_parts=int(split_max_parts),
+            split_max_parts=int(split_max_parts), split_depth=int(split_depth),
         )
         while len(layers) < self.MAX_LAYERS:
             layers.append([])

@@ -768,8 +768,8 @@ def layer_heights(masks, contain_ratio=0.85):
     return height, parent
 
 
-def colour_parts(image, mask, min_frac=0.10, max_frac=0.80, clusters=4, min_dim=10,
-                 min_area=2000):
+def colour_parts(image, mask, min_frac=0.05, max_frac=0.80, clusters=5, min_dim=8,
+                 min_area=1200):
     """Find the pieces a UI element was drawn from, by colour, inside the element itself.
 
     A prompt finds "the button". The art it was built from is a plate, a 9-slice frame, a strip
@@ -886,25 +886,34 @@ def auto_layers(masks, labels=None, dedupe_iou=0.85, contain_ratio=0.85, min_are
         boxes_have = [bbox(m) for m in kept]
         areas_have = [int(m.sum()) for m in kept]
         extra, extra_labels = [], []
-        for source in list(kept):
-            for piece in colour_parts(image, source, min_frac=float(split_min_frac))[
-                    :int(split_max_parts)]:
-                pb, pa = bbox(piece), int(piece.sum())
-                if pb is None or pa < min_area:
-                    continue
-                twin = False
-                for existing, eb, ea in zip(kept + extra,
-                                            boxes_have + [bbox(e) for e in extra],
-                                            areas_have + [int(e.sum()) for e in extra]):
-                    if eb is None:
+        # An icon sits on a plate which sits on a button, so one pass is not enough: the pieces
+        # of a piece are elements too. Each round splits what the previous round produced.
+        frontier = list(kept)
+        for _round in range(max(1, int(split_depth))):
+            produced = []
+            for source in frontier:
+                for piece in colour_parts(image, source, min_frac=float(split_min_frac))[
+                        :int(split_max_parts)]:
+                    pb, pa = bbox(piece), int(piece.sum())
+                    if pb is None or pa < min_area:
                         continue
-                    inter = _crop_inter(piece, pb, existing, eb)
-                    if inter / max(1, pa + ea - inter) > dedupe_iou:
-                        twin = True
-                        break
-                if not twin:
-                    extra.append(piece)
-                    extra_labels.append('part')
+                    twin = False
+                    for existing, eb, ea in zip(kept + extra,
+                                                boxes_have + [bbox(e) for e in extra],
+                                                areas_have + [int(e.sum()) for e in extra]):
+                        if eb is None:
+                            continue
+                        inter = _crop_inter(piece, pb, existing, eb)
+                        if inter / max(1, pa + ea - inter) > dedupe_iou:
+                            twin = True
+                            break
+                    if not twin:
+                        extra.append(piece)
+                        extra_labels.append('part')
+                        produced.append(piece)
+            frontier = produced
+            if not frontier:
+                break
         if extra:
             kept = kept + extra
             kept_labels = kept_labels + extra_labels
