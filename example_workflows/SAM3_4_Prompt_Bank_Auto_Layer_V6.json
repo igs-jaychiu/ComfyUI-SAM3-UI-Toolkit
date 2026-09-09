@@ -1,6 +1,6 @@
 {
   "last_node_id": 74,
-  "last_link_id": 196,
+  "last_link_id": 197,
   "nodes": [
     {
       "id": 1,
@@ -59,7 +59,8 @@
             108,
             124,
             160,
-            196
+            196,
+            197
           ],
           "slot_index": 0
         },
@@ -215,6 +216,11 @@
           "name": "labels_json",
           "type": "STRING",
           "link": 5
+        },
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 197
         }
       ],
       "outputs": [
@@ -5861,6 +5867,14 @@
       0,
       71,
       34,
+      "IMAGE"
+    ],
+    [
+      197,
+      2,
+      0,
+      5,
+      2,
       "IMAGE"
     ]
   ],

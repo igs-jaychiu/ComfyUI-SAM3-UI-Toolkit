@@ -758,10 +758,60 @@ def layer_heights(masks, contain_ratio=0.85):
     return height, parent
 
 
+def colour_parts(image, mask, min_frac=0.06, max_frac=0.85, clusters=5, min_dim=8,
+                 min_area=400):
+    """Find the pieces a UI element was drawn from, by colour, inside the element itself.
+
+    A prompt finds "the button". The art it was built from is a plate, a 9-slice frame, a strip
+    of tape and an icon, and none of those is a separate object to look at - so no amount of
+    prompting returns them. They are separate *colours* though, laid out in flat regions the way
+    UI art always is, so clustering the colours inside an element and taking the connected pieces
+    recovers them without inventing anything.
+    """
+    box = bbox(mask)
+    if box is None:
+        return []
+    x1, y1, x2, y2 = box
+    sub = image[y1:y2, x1:x2]
+    inside = mask[y1:y2, x1:x2]
+    area = int(inside.sum())
+    if area < min_area or min(x2 - x1, y2 - y1) < 2 * min_dim:
+        return []
+    lab = cv2.cvtColor(sub, cv2.COLOR_RGB2LAB).astype(np.float32)
+    samples = lab[inside]
+    count = int(min(clusters, max(2, len(samples) // 200)))
+    if count < 2:
+        return []
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 12, 1.0)
+    _err, assignment, _centres = cv2.kmeans(samples, count, None, criteria, 3,
+                                            cv2.KMEANS_PP_CENTERS)
+    index = np.full(inside.shape, -1, np.int32)
+    index[inside] = assignment.ravel()
+    pieces = []
+    for cluster in range(count):
+        band = (index == cluster).astype(np.uint8)
+        if band.sum() < min_frac * area:
+            continue
+        found, labelled, stats, _ = cv2.connectedComponentsWithStats(band, connectivity=8)
+        for comp in range(1, found):
+            size = int(stats[comp, cv2.CC_STAT_AREA])
+            if size < min_frac * area or size > max_frac * area:
+                continue
+            if min(int(stats[comp, cv2.CC_STAT_WIDTH]),
+                   int(stats[comp, cv2.CC_STAT_HEIGHT])) < min_dim:
+                continue
+            piece = np.zeros(mask.shape, bool)
+            piece[y1:y2, x1:x2] = labelled == comp
+            pieces.append((size, piece))
+    pieces.sort(key=lambda t: -t[0])
+    return [p for _size, p in pieces]
+
+
 def auto_layers(masks, labels=None, dedupe_iou=0.85, contain_ratio=0.85, min_area=40,
                 max_area_frac=0.98, min_fill=0.0, min_dim=6, max_layers=6, close_holes_from=3,
                 label_priority=None, despeckle_frac=0.06, min_votes=1, straddle_lo=0.0,
-                straddle_hi=0.0, drop_same_label_children=False):
+                straddle_hi=0.0, drop_same_label_children=False, image=None,
+                split_parts=False, split_min_frac=0.06, split_max_parts=4):
     """Pool masks from many prompts, clean them, and split into z-order layers (leaves first).
 
     Returns (layers, labels_per_layer, summary, meta_per_layer). layers[k] is a list of bool
@@ -817,6 +867,39 @@ def auto_layers(masks, labels=None, dedupe_iou=0.85, contain_ratio=0.85, min_are
         kept_labels = [kept_labels[i] for i in sel]
         votes = [votes[i] for i in sel]
     n_votes = len(kept)
+
+    # --- the art an element was built from is not a set of separate objects, so prompting never
+    # returns it. Split each kept element by colour and add the pieces to the pool; containment
+    # layering then treats them as its children, which is what they are.
+    n_parts = 0
+    if split_parts and image is not None and kept:
+        boxes_have = [bbox(m) for m in kept]
+        areas_have = [int(m.sum()) for m in kept]
+        extra, extra_labels = [], []
+        for source in list(kept):
+            for piece in colour_parts(image, source, min_frac=float(split_min_frac))[
+                    :int(split_max_parts)]:
+                pb, pa = bbox(piece), int(piece.sum())
+                if pb is None or pa < min_area:
+                    continue
+                twin = False
+                for existing, eb, ea in zip(kept + extra,
+                                            boxes_have + [bbox(e) for e in extra],
+                                            areas_have + [int(e.sum()) for e in extra]):
+                    if eb is None:
+                        continue
+                    inter = _crop_inter(piece, pb, existing, eb)
+                    if inter / max(1, pa + ea - inter) > dedupe_iou:
+                        twin = True
+                        break
+                if not twin:
+                    extra.append(piece)
+                    extra_labels.append('part')
+        if extra:
+            kept = kept + extra
+            kept_labels = kept_labels + extra_labels
+            votes = votes + [max(1, min_votes)] * len(extra)
+            n_parts = len(extra)
 
     # --- straddle suppression: a mask that half-overlaps another (neither disjoint nor cleanly
     # contained) is a bad cut across two elements; keep whichever has more prompt agreement.
