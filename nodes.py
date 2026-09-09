@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 22
+BUILD = 23
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -1295,6 +1295,8 @@ class SAM3CropToRGBA:
                 "under": ("IMAGE",),
                 "under_thresh": ("FLOAT", {"default": 4.0, "min": 0.5, "max": 64.0, "step": 0.5}),
                 "under_cap": ("INT", {"default": 64, "min": 1, "max": 512, "step": 1}),
+                # how far past its own edge an element may claim, as a fraction of its short side
+                "under_relative": ("FLOAT", {"default": 0.35, "min": 0.0, "max": 2.0, "step": 0.01}),
                 "under_exact": ("FLOAT", {"default": 2.0, "min": 0.0, "max": 64.0, "step": 0.5}),
                 "meta_json": ("STRING", {"forceInput": True}),
             },
@@ -1383,7 +1385,7 @@ class SAM3CropToRGBA:
              align_siblings=True, align_tolerance=0.12,
              defringe=True, defringe_floor=0.80, halo=True, halo_grow=5,
              halo_reach=18, halo_thresh=13.0, under=None, under_thresh=4.0,
-             under_cap=64, under_exact=2.0, meta_json=""):
+             under_cap=64, under_relative=0.35, under_exact=2.0, meta_json=""):
         import cv2
         import numpy as np
 
@@ -1413,7 +1415,7 @@ class SAM3CropToRGBA:
             changed = np.abs(rgb.astype(np.float32)
                              - peeled.astype(np.float32)).max(axis=2) > float(under_thresh)
             regions = auto_filter.claim_changed(bool_masks, changed, cap=int(under_cap),
-                                                relative=0.35)
+                                                relative=float(under_relative))
         elif halo and int(halo_reach) > 0:
             regions = [auto_filter.shadow_grow(rgb, m, reach=int(halo_reach),
                                                thresh=float(halo_thresh), base=int(halo_grow))
