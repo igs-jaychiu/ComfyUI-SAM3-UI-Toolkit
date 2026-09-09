@@ -226,28 +226,38 @@ def claim_changed(masks, changed, cap=64, relative=0.0):
     where it should, while capping the reach at a fixed radius leaves the outer part of a large
     element's shadow belonging to nobody at all. Nearest element wins instead, so the claims
     tile the changed area exactly once.
+
+    One distance transform decides all of it. Doing one per mask costs a full-image pass each
+    time, which is minutes once a screen has a few hundred elements on it.
     """
     if not masks:
         return []
     height, width = changed.shape
-    best = np.full((height, width), np.inf, np.float32)
-    owner = np.full((height, width), -1, np.int16)
+    union = np.zeros((height, width), np.uint8)
+    for mask in masks:
+        union |= mask.astype(np.uint8)
+    if not union.any():
+        return list(masks)
+    count, components = cv2.connectedComponents(union, connectivity=8)
+    distance, nearest = cv2.distanceTransformWithLabels(
+        (union == 0).astype(np.uint8), cv2.DIST_L2, 3, labelType=cv2.DIST_LABEL_CCOMP)
+    # cv2 numbers the zero-set components its own way; read the mapping off the seed pixels
+    owner_of = np.zeros(int(nearest.max()) + 1, np.int32) - 1
+    side_of = np.zeros(int(nearest.max()) + 1, np.float32)
     for index, mask in enumerate(masks):
-        distance = cv2.distanceTransform((~mask).astype(np.uint8), cv2.DIST_L2, 3)
-        closer = distance < best
-        best = np.where(closer, distance, best)
-        owner = np.where(closer, np.int16(index), owner)
-    if relative <= 0:
-        reachable = changed & (best <= float(cap))
-        return [mask | (reachable & (owner == index)) for index, mask in enumerate(masks)]
-    # A flat radius is wrong for a screen that mixes a 600px panel with a 50px coin: the coin
-    # claims a ring wider than itself. Each element reaches a fraction of its own short side.
-    limit = np.zeros(changed.shape, np.float32)
-    for index, mask in enumerate(masks):
+        tags = nearest[mask]
+        if tags.size == 0:
+            continue
         box = bbox(mask)
         side = float(min(box[2] - box[0], box[3] - box[1])) if box else 0.0
-        limit[owner == index] = min(float(cap), max(4.0, side * float(relative)))
-    reachable = changed & (best <= limit)
+        for tag in np.unique(tags):
+            if owner_of[tag] < 0:
+                owner_of[tag] = index
+                side_of[tag] = side
+    limit = (np.minimum(float(cap), np.maximum(4.0, side_of * float(relative)))
+             if relative > 0 else np.full_like(side_of, float(cap)))
+    reachable = changed & (distance <= limit[nearest])
+    owner = owner_of[nearest]
     return [mask | (reachable & (owner == index)) for index, mask in enumerate(masks)]
 
 
@@ -758,8 +768,8 @@ def layer_heights(masks, contain_ratio=0.85):
     return height, parent
 
 
-def colour_parts(image, mask, min_frac=0.06, max_frac=0.85, clusters=5, min_dim=8,
-                 min_area=400):
+def colour_parts(image, mask, min_frac=0.10, max_frac=0.80, clusters=4, min_dim=10,
+                 min_area=2000):
     """Find the pieces a UI element was drawn from, by colour, inside the element itself.
 
     A prompt finds "the button". The art it was built from is a plate, a 9-slice frame, a strip
@@ -900,6 +910,7 @@ def auto_layers(masks, labels=None, dedupe_iou=0.85, contain_ratio=0.85, min_are
             kept_labels = kept_labels + extra_labels
             votes = votes + [max(1, min_votes)] * len(extra)
             n_parts = len(extra)
+        print(f"[auto_layers] split {len(kept) - n_parts} elements into {n_parts} extra parts")
 
     # --- straddle suppression: a mask that half-overlaps another (neither disjoint nor cleanly
     # contained) is a bad cut across two elements; keep whichever has more prompt agreement.
@@ -1010,6 +1021,7 @@ def auto_layers(masks, labels=None, dedupe_iou=0.85, contain_ratio=0.85, min_are
         layer_meta.append(meta)
 
     summary = (f'in={len(masks)} sized={len(sized)} dedupe={n_dedupe} votes={n_votes} '
+               f'parts={n_parts} '
                f'straddle={n_straddle} granular={n_granular} layers=' + '/'.join(str(len(l)) for l in layers))
     return layers, layer_labels, summary, layer_meta
 
