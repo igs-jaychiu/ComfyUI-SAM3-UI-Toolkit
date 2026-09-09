@@ -1,6 +1,6 @@
 {
   "last_node_id": 74,
-  "last_link_id": 195,
+  "last_link_id": 196,
   "nodes": [
     {
       "id": 1,
@@ -58,7 +58,8 @@
             92,
             108,
             124,
-            160
+            160,
+            196
           ],
           "slot_index": 0
         },
@@ -4056,6 +4057,11 @@
           "name": "flat_coords_8",
           "type": "STRING",
           "link": 195
+        },
+        {
+          "name": "original",
+          "type": "IMAGE",
+          "link": 196
         }
       ],
       "outputs": [
@@ -5848,6 +5854,14 @@
       71,
       33,
       "STRING"
+    ],
+    [
+      196,
+      2,
+      0,
+      71,
+      34,
+      "IMAGE"
     ]
   ],
   "groups": [],

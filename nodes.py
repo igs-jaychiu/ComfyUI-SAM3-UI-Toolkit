@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 15
+BUILD = 16
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -827,6 +827,9 @@ class SAM3PackAssets:
             optional[f"flat_{i}"] = ("IMAGE",)
             optional[f"flat_coords_{i}"] = ("STRING", {"forceInput": True})
         optional["background"] = ("IMAGE",)
+        # the source screen, so the pack can tell a peeled cut that is still usable from one the
+        # peel ruined
+        optional["original"] = ("IMAGE",)
         optional["nineslice_json"] = ("STRING", {"forceInput": True})
         return {
             "required": {
@@ -895,8 +898,9 @@ class SAM3PackAssets:
                 alpha = (array[..., 3].detach().cpu().numpy() > 0.98
                          if array.shape[2] == 4 else
                          np.ones(array.shape[:2], bool))
+                rgb = (array[..., :3].detach().cpu().clamp(0.0, 1.0).numpy() * 255.0)
                 items.append({"slot": slot, "index": index, "info": info, "data": data,
-                              "solid": alpha,
+                              "solid": alpha, "rgb": rgb,
                               "uid": info.get("uid") or f"L{slot}_{index + 1}",
                               "label": info.get("label") or "part",
                               "layer": int(info.get("layer") or slot),
@@ -904,14 +908,16 @@ class SAM3PackAssets:
         return items
 
     @staticmethod
-    def _recommend(assets, flats):
+    def _recommend(assets, flats, original=None):
         """Say which of the two cuts is the usable one for each element.
 
         Layering by geometric containment is right for a button holding a label and wrong for a
         line of text holding its own glyphs: peel the second and what is left is the plate with
-        the writing gone, which is not an asset anyone wants. The signal that separates them is
-        how much of the element its own finer layers cover - past half, the peeled cut is mostly
-        fill and the flat one is what to ship.
+        the writing gone, which is not an asset anyone wants. Two signals decide it. How much of
+        the element its own finer layers cover says the peel was meant to empty it. How much of
+        the peeled cut still matches the screen catches the rest: a line of text whose last glyph
+        was eaten by a detection on another layer looks barely covered and is still ruined, and
+        only a comparison against the original sees that.
         """
         import numpy as np
 
@@ -922,6 +928,12 @@ class SAM3PackAssets:
             return
         height = max(a["y"] + a["solid"].shape[0] for a in assets)
         width = max(a["x"] + a["solid"].shape[1] for a in assets)
+        source = None
+        if original is not None:
+            array = original[0] if original.ndim == 4 else original
+            source = (array[..., :3].detach().cpu().clamp(0.0, 1.0).numpy() * 255.0)
+            if source.shape[:2] != (height, width):
+                source = None
         finer = np.zeros((height, width), bool)
         for layer in sorted({a["layer"] for a in assets}):
             for item in assets:
@@ -934,7 +946,17 @@ class SAM3PackAssets:
                 window = finer[y:y + h, x:x + w]
                 hit = int((window & own[:window.shape[0], :window.shape[1]]).sum())
                 item["covered"] = hit / total if total else 0.0
-                item["use"] = "flat" if (item["covered"] > 0.5 and item["flat"]) else "asset"
+                item["real"] = None
+                if source is not None and total:
+                    patch = item["rgb"][:window.shape[0], :window.shape[1]]
+                    core = own[:window.shape[0], :window.shape[1]]
+                    if core.any():
+                        gap = np.abs(patch - source[y:y + patch.shape[0],
+                                                    x:x + patch.shape[1]]).max(axis=2)
+                        item["real"] = float((gap[core] <= 10.0).mean())
+                ruined = item["real"] is not None and item["real"] < 0.60
+                item["use"] = ("flat" if item["flat"] and (item["covered"] > 0.5 or ruined)
+                               else "asset")
             for item in assets:
                 if item["layer"] != layer:
                     continue
@@ -976,7 +998,7 @@ class SAM3PackAssets:
         written = curated = 0
         assets = self._collect(kwargs, "layer_", "coords_")
         flats = self._collect(kwargs, "flat_", "flat_coords_")
-        self._recommend(assets, flats)
+        self._recommend(assets, flats, self._one(kwargs.get("original")))
         with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
             for item in assets:
                 slot, info = item["slot"], item["info"]
@@ -986,6 +1008,8 @@ class SAM3PackAssets:
                 record = {"file": f"all/layer{slot}/{name}"}
                 record.update(info)
                 record["covered_by_children"] = round(item["covered"], 4)
+                if item.get("real") is not None:
+                    record["peeled_matches_screen"] = round(item["real"], 4)
                 record["use"] = item["use"]
                 if item["uid"] in nine:
                     record["nine_slice"] = {
