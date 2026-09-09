@@ -768,8 +768,8 @@ def layer_heights(masks, contain_ratio=0.85):
     return height, parent
 
 
-def colour_parts(image, mask, min_frac=0.05, max_frac=0.80, clusters=5, min_dim=8,
-                 min_area=1200):
+def colour_parts(image, mask, min_frac=0.05, max_frac=0.80, clusters=7, min_dim=6,
+                 min_area=500):
     """Find the pieces a UI element was drawn from, by colour, inside the element itself.
 
     A prompt finds "the button". The art it was built from is a plate, a 9-slice frame, a strip
