@@ -125,8 +125,29 @@ D:\ComfyUI\python_embeded\python.exe -m pip install -r D:\ComfyUI\ComfyUI\custom
 超過 `periodic_max_span` 就交回 `interp`:那邊實測贏不了,因為內部的塊已經沒有可信邊界可以驗。
 另外來源區的局部變異不能明顯高於洞周圍的環帶,否則同一塊板子上的另一行文字會被抄進來。
 
-Pack 節點改為打包 **asset**（下層已剝離）那一份,也就是量出上表數字的那一份。
-`flat` 仍然由各層的 SaveImage 寫到 `output/sam3_out/layerN/flat`。
+#### Pack 兩種切法都裝, 並標註每張該用哪一份
+
+依包含關係分層, 對「按鈕包著標籤」是對的, 對「一行文字包著自己的字」是錯的 ——
+把後者剝掉只剩一塊沒有字的底板, 那不是任何人要的素材。所以 zip 裡兩份都有:
+
+- `all/layerN/` — **asset**（下層已剝離）
+- `flat/layerN/` — **flat**（直接從原圖切）
+- `curated/` — 每個元件挑「可用的那一份」, manifest 的 `cut` 欄位記錄挑了哪種
+
+manifest 每個元件帶三個判斷依據 (`use` 是結論):
+
+| 欄位 | 意思 | 觸發 flat 的條件 |
+| --- | --- | --- |
+| `covered_by_children` | 更細的層蓋掉它多少 | > 0.5 → 剝完幾乎都是補出來的 |
+| `peeled_matches_screen` | 剝離版還在的部分跟原圖吻合多少 | < 0.6 → 剩下的東西已經不對 |
+| `peeled_lost_area` | 少掉的面積扣掉子元件該蓋的 | > 0.25 → 元件被吃掉一塊 |
+
+第三個是必要的:一行文字的最後一個字被別層的偵測吃掉時, 前兩個指標都很漂亮
+（covered 0.06、matches 0.94）但素材就是缺字。分母必須是元件自己的 mask 面積,
+不能拿 flat 的面積比 —— flat 的 matte 帶軟陰影裙邊, 會讓每個切得很緊的葉節點看起來像少了一半。
+
+實測 101 個元件:葉節點全部 `lost = 0`、`matches = 1.0`、判 asset;
+只有 1 個元件 `lost > 0.05`（就是上面那行文字, 0.42）;22 個判 flat。
 
 ### V6 新增 / 強化
 
