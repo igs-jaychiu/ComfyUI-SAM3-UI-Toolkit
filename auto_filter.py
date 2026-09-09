@@ -821,7 +821,8 @@ def auto_layers(masks, labels=None, dedupe_iou=0.85, contain_ratio=0.85, min_are
                 max_area_frac=0.98, min_fill=0.0, min_dim=6, max_layers=6, close_holes_from=3,
                 label_priority=None, despeckle_frac=0.06, min_votes=1, straddle_lo=0.0,
                 straddle_hi=0.0, drop_same_label_children=False, image=None,
-                split_parts=False, split_min_frac=0.06, split_max_parts=4):
+                split_parts=False, split_min_frac=0.06, split_max_parts=4,
+                split_depth=1):
     """Pool masks from many prompts, clean them, and split into z-order layers (leaves first).
 
     Returns (layers, labels_per_layer, summary, meta_per_layer). layers[k] is a list of bool

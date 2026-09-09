@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 27
+BUILD = 28
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -766,7 +766,7 @@ class SAM3AutoLayerMasks:
                 "split_parts": ("BOOLEAN", {"default": True}),
                 "split_min_frac": ("FLOAT", {"default": 0.05, "min": 0.01, "max": 0.5,
                                              "step": 0.01}),
-                "split_max_parts": ("INT", {"default": 4, "min": 1, "max": 16, "step": 1}),
+                "split_max_parts": ("INT", {"default": 3, "min": 1, "max": 16, "step": 1}),
                 "split_depth": ("INT", {"default": 2, "min": 1, "max": 4, "step": 1}),
             },
         }
@@ -779,7 +779,7 @@ class SAM3AutoLayerMasks:
     def split(self, masks, dedupe_iou=0.8, contain_ratio=0.85, min_area=40, max_area_frac=0.98,
               min_fill=0.0, min_dim=6, close_holes_from=3, min_votes=2, despeckle_frac=0.06,
               labels_json="", image=None, split_parts=True, split_min_frac=0.05,
-              split_max_parts=4, split_depth=2):
+              split_max_parts=3, split_depth=2):
         if masks.ndim == 2:
             masks = masks.unsqueeze(0)
         size = masks.shape[-2:]
