@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 19
+BUILD = 20
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -967,7 +967,7 @@ class SAM3PackAssets:
                 # differently - it carries a soft shadow skirt - so measuring against it makes
                 # every tight leaf look like it lost half of itself.
                 mate = item["flat"]
-                area = float(info.get("area") or 0.0)
+                area = float(item["info"].get("area") or 0.0)
                 kept = float(item["visible"].sum() / area) if area > 0 else 1.0
                 item["kept"] = min(kept, 1.0)
                 item["lost"] = max(0.0, (1.0 - item["kept"]) - item["covered"])
