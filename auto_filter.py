@@ -218,7 +218,7 @@ def shadow_grow(image, mask, reach=24, thresh=14.0, base=3, bg_std_max=30.0, max
     return out
 
 
-def claim_changed(masks, changed, cap=64):
+def claim_changed(masks, changed, cap=64, relative=0.0):
     """Give every pixel a peel touched to exactly one of the elements it removed.
 
     Two neighbouring buttons share the gap between them, and both of their shadows land in it.
@@ -237,7 +237,17 @@ def claim_changed(masks, changed, cap=64):
         closer = distance < best
         best = np.where(closer, distance, best)
         owner = np.where(closer, np.int16(index), owner)
-    reachable = changed & (best <= float(cap))
+    if relative <= 0:
+        reachable = changed & (best <= float(cap))
+        return [mask | (reachable & (owner == index)) for index, mask in enumerate(masks)]
+    # A flat radius is wrong for a screen that mixes a 600px panel with a 50px coin: the coin
+    # claims a ring wider than itself. Each element reaches a fraction of its own short side.
+    limit = np.zeros(changed.shape, np.float32)
+    for index, mask in enumerate(masks):
+        box = bbox(mask)
+        side = float(min(box[2] - box[0], box[3] - box[1])) if box else 0.0
+        limit[owner == index] = min(float(cap), max(4.0, side * float(relative)))
+    reachable = changed & (best <= limit)
     return [mask | (reachable & (owner == index)) for index, mask in enumerate(masks)]
 
 

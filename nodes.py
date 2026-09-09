@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 20
+BUILD = 21
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -1412,7 +1412,8 @@ class SAM3CropToRGBA:
             # to the element nearest to it so the claims cover that area exactly once.
             changed = np.abs(rgb.astype(np.float32)
                              - peeled.astype(np.float32)).max(axis=2) > float(under_thresh)
-            regions = auto_filter.claim_changed(bool_masks, changed, cap=int(under_cap))
+            regions = auto_filter.claim_changed(bool_masks, changed, cap=int(under_cap),
+                                                relative=0.35)
         elif halo and int(halo_reach) > 0:
             regions = [auto_filter.shadow_grow(rgb, m, reach=int(halo_reach),
                                                thresh=float(halo_thresh), base=int(halo_grow))
@@ -1629,9 +1630,12 @@ class SAM3DeterministicInpaint:
                 dims.append(min(box[2] - box[0], box[3] - box[1]))
         if not dims:
             return 4, 12
-        typical = float(np.median(dims))
-        grow = int(round(min(8.0, max(3.0, 3.0 + typical / 150.0))))
-        reach = int(round(min(36.0, max(8.0, typical * 0.12))))
+        return SAM3DeterministicInpaint._scale_for(float(np.median(dims)))
+
+    @staticmethod
+    def _scale_for(short_side):
+        grow = int(round(min(8.0, max(3.0, 3.0 + short_side / 150.0))))
+        reach = int(round(min(36.0, max(4.0, short_side * 0.12))))
         return grow, reach
 
     def inpaint(self, image, masks, method="interp", radius=5, gradient_ring=20, grow=0,
@@ -1659,10 +1663,20 @@ class SAM3DeterministicInpaint:
             for mask in bool_masks:
                 if not mask.any():
                     continue
-                if int(grow) > 0 or int(shadow_reach) > 0:
+                near, far = int(grow), int(shadow_reach)
+                if auto_scale:
+                    # One reach for a whole layer is wrong whenever the layer holds both a
+                    # 600px panel and a 50px coin: the coin ends up with a margin bigger than
+                    # itself erased around it, and the sprite that has to carry that margin
+                    # comes out at twice the size of the icon it is meant to be.
+                    box = auto_filter.bbox(mask)
+                    if box:
+                        near, far = self._scale_for(
+                            float(min(box[2] - box[0], box[3] - box[1])))
+                if near > 0 or far > 0:
                     fill |= auto_filter.shadow_grow(
-                        rgb, mask, reach=int(shadow_reach), thresh=float(shadow_thresh),
-                        base=int(grow), bg_std_max=float(bg_std_max), max_expand=float(max_expand),
+                        rgb, mask, reach=far, thresh=float(shadow_thresh),
+                        base=near, bg_std_max=float(bg_std_max), max_expand=float(max_expand),
                     )
                 else:
                     fill |= mask
