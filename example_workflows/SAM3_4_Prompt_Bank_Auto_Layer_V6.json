@@ -1,6 +1,6 @@
 {
   "last_node_id": 74,
-  "last_link_id": 179,
+  "last_link_id": 195,
   "nodes": [
     {
       "id": 1,
@@ -597,14 +597,17 @@
           "name": "RGBA_IMAGES",
           "type": "IMAGE",
           "links": [
-            16
+            16,
+            180
           ],
           "slot_index": 0
         },
         {
           "name": "COORDS_JSON",
           "type": "STRING",
-          "links": [],
+          "links": [
+            181
+          ],
           "slot_index": 1
         }
       ],
@@ -1026,14 +1029,17 @@
           "name": "RGBA_IMAGES",
           "type": "IMAGE",
           "links": [
-            31
+            31,
+            182
           ],
           "slot_index": 0
         },
         {
           "name": "COORDS_JSON",
           "type": "STRING",
-          "links": [],
+          "links": [
+            183
+          ],
           "slot_index": 1
         }
       ],
@@ -1460,14 +1466,17 @@
           "name": "RGBA_IMAGES",
           "type": "IMAGE",
           "links": [
-            47
+            47,
+            184
           ],
           "slot_index": 0
         },
         {
           "name": "COORDS_JSON",
           "type": "STRING",
-          "links": [],
+          "links": [
+            185
+          ],
           "slot_index": 1
         }
       ],
@@ -1894,14 +1903,17 @@
           "name": "RGBA_IMAGES",
           "type": "IMAGE",
           "links": [
-            63
+            63,
+            186
           ],
           "slot_index": 0
         },
         {
           "name": "COORDS_JSON",
           "type": "STRING",
-          "links": [],
+          "links": [
+            187
+          ],
           "slot_index": 1
         }
       ],
@@ -2328,14 +2340,17 @@
           "name": "RGBA_IMAGES",
           "type": "IMAGE",
           "links": [
-            79
+            79,
+            188
           ],
           "slot_index": 0
         },
         {
           "name": "COORDS_JSON",
           "type": "STRING",
-          "links": [],
+          "links": [
+            189
+          ],
           "slot_index": 1
         }
       ],
@@ -2762,14 +2777,17 @@
           "name": "RGBA_IMAGES",
           "type": "IMAGE",
           "links": [
-            95
+            95,
+            190
           ],
           "slot_index": 0
         },
         {
           "name": "COORDS_JSON",
           "type": "STRING",
-          "links": [],
+          "links": [
+            191
+          ],
           "slot_index": 1
         }
       ],
@@ -3196,14 +3214,17 @@
           "name": "RGBA_IMAGES",
           "type": "IMAGE",
           "links": [
-            111
+            111,
+            192
           ],
           "slot_index": 0
         },
         {
           "name": "COORDS_JSON",
           "type": "STRING",
-          "links": [],
+          "links": [
+            193
+          ],
           "slot_index": 1
         }
       ],
@@ -3630,14 +3651,17 @@
           "name": "RGBA_IMAGES",
           "type": "IMAGE",
           "links": [
-            127
+            127,
+            194
           ],
           "slot_index": 0
         },
         {
           "name": "COORDS_JSON",
           "type": "STRING",
-          "links": [],
+          "links": [
+            195
+          ],
           "slot_index": 1
         }
       ],
@@ -3952,6 +3976,86 @@
           "name": "nineslice_json",
           "type": "STRING",
           "link": 151
+        },
+        {
+          "name": "flat_1",
+          "type": "IMAGE",
+          "link": 180
+        },
+        {
+          "name": "flat_coords_1",
+          "type": "STRING",
+          "link": 181
+        },
+        {
+          "name": "flat_2",
+          "type": "IMAGE",
+          "link": 182
+        },
+        {
+          "name": "flat_coords_2",
+          "type": "STRING",
+          "link": 183
+        },
+        {
+          "name": "flat_3",
+          "type": "IMAGE",
+          "link": 184
+        },
+        {
+          "name": "flat_coords_3",
+          "type": "STRING",
+          "link": 185
+        },
+        {
+          "name": "flat_4",
+          "type": "IMAGE",
+          "link": 186
+        },
+        {
+          "name": "flat_coords_4",
+          "type": "STRING",
+          "link": 187
+        },
+        {
+          "name": "flat_5",
+          "type": "IMAGE",
+          "link": 188
+        },
+        {
+          "name": "flat_coords_5",
+          "type": "STRING",
+          "link": 189
+        },
+        {
+          "name": "flat_6",
+          "type": "IMAGE",
+          "link": 190
+        },
+        {
+          "name": "flat_coords_6",
+          "type": "STRING",
+          "link": 191
+        },
+        {
+          "name": "flat_7",
+          "type": "IMAGE",
+          "link": 192
+        },
+        {
+          "name": "flat_coords_7",
+          "type": "STRING",
+          "link": 193
+        },
+        {
+          "name": "flat_8",
+          "type": "IMAGE",
+          "link": 194
+        },
+        {
+          "name": "flat_coords_8",
+          "type": "STRING",
+          "link": 195
         }
       ],
       "outputs": [
@@ -5616,6 +5720,134 @@
       74,
       0,
       "IMAGE"
+    ],
+    [
+      180,
+      10,
+      0,
+      71,
+      18,
+      "IMAGE"
+    ],
+    [
+      181,
+      10,
+      1,
+      71,
+      19,
+      "STRING"
+    ],
+    [
+      182,
+      18,
+      0,
+      71,
+      20,
+      "IMAGE"
+    ],
+    [
+      183,
+      18,
+      1,
+      71,
+      21,
+      "STRING"
+    ],
+    [
+      184,
+      26,
+      0,
+      71,
+      22,
+      "IMAGE"
+    ],
+    [
+      185,
+      26,
+      1,
+      71,
+      23,
+      "STRING"
+    ],
+    [
+      186,
+      34,
+      0,
+      71,
+      24,
+      "IMAGE"
+    ],
+    [
+      187,
+      34,
+      1,
+      71,
+      25,
+      "STRING"
+    ],
+    [
+      188,
+      42,
+      0,
+      71,
+      26,
+      "IMAGE"
+    ],
+    [
+      189,
+      42,
+      1,
+      71,
+      27,
+      "STRING"
+    ],
+    [
+      190,
+      50,
+      0,
+      71,
+      28,
+      "IMAGE"
+    ],
+    [
+      191,
+      50,
+      1,
+      71,
+      29,
+      "STRING"
+    ],
+    [
+      192,
+      58,
+      0,
+      71,
+      30,
+      "IMAGE"
+    ],
+    [
+      193,
+      58,
+      1,
+      71,
+      31,
+      "STRING"
+    ],
+    [
+      194,
+      66,
+      0,
+      71,
+      32,
+      "IMAGE"
+    ],
+    [
+      195,
+      66,
+      1,
+      71,
+      33,
+      "STRING"
     ]
   ],
   "groups": [],

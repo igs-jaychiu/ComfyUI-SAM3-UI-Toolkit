@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 14
+BUILD = 15
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -820,6 +820,12 @@ class SAM3PackAssets:
         for i in range(1, cls.SLOTS + 1):
             optional[f"layer_{i}"] = ("IMAGE",)
             optional[f"coords_{i}"] = ("STRING", {"forceInput": True})
+        # The flat cut of the same element, straight off the original. Layering by containment
+        # makes a line of text the "container" of its own glyphs, so peeling it leaves a shape
+        # nobody can use - that element needs its flat cut, and only the pack knows which.
+        for i in range(1, cls.SLOTS + 1):
+            optional[f"flat_{i}"] = ("IMAGE",)
+            optional[f"flat_coords_{i}"] = ("STRING", {"forceInput": True})
         optional["background"] = ("IMAGE",)
         optional["nineslice_json"] = ("STRING", {"forceInput": True})
         return {
@@ -858,6 +864,85 @@ class SAM3PackAssets:
         ok, buf = cv2.imencode(".png", cv2.cvtColor(rgba, cv2.COLOR_RGBA2BGRA))
         return buf.tobytes() if ok else None
 
+    def _collect(self, kwargs, image_prefix, coords_prefix):
+        """Gather one set of cuts: PNG bytes, coordinates and the opaque core of each sprite."""
+        import numpy as np
+
+        items = []
+        for slot in range(1, self.SLOTS + 1):
+            images = kwargs.get(f"{image_prefix}{slot}")
+            if images is None:
+                continue
+            if not isinstance(images, list):
+                images = [images]
+            rows = []
+            raw = self._one(kwargs.get(f"{coords_prefix}{slot}"), None)
+            if raw:
+                try:
+                    rows = json.loads(raw)
+                except (TypeError, ValueError):
+                    rows = []
+            for index, tensor in enumerate(images):
+                if getattr(tensor, "ndim", 0) < 3:
+                    continue
+                array = tensor[0] if tensor.ndim == 4 else tensor
+                if min(int(array.shape[0]), int(array.shape[1])) < 2:
+                    continue          # the 1x1 placeholder an empty layer emits
+                data = self._as_png_bytes(tensor)
+                if data is None:
+                    continue
+                info = rows[index] if index < len(rows) and isinstance(rows[index], dict) else {}
+                alpha = (array[..., 3].detach().cpu().numpy() > 0.98
+                         if array.shape[2] == 4 else
+                         np.ones(array.shape[:2], bool))
+                items.append({"slot": slot, "index": index, "info": info, "data": data,
+                              "solid": alpha,
+                              "uid": info.get("uid") or f"L{slot}_{index + 1}",
+                              "label": info.get("label") or "part",
+                              "layer": int(info.get("layer") or slot),
+                              "x": int(info.get("x", 0)), "y": int(info.get("y", 0))})
+        return items
+
+    @staticmethod
+    def _recommend(assets, flats):
+        """Say which of the two cuts is the usable one for each element.
+
+        Layering by geometric containment is right for a button holding a label and wrong for a
+        line of text holding its own glyphs: peel the second and what is left is the plate with
+        the writing gone, which is not an asset anyone wants. The signal that separates them is
+        how much of the element its own finer layers cover - past half, the peeled cut is mostly
+        fill and the flat one is what to ship.
+        """
+        import numpy as np
+
+        by_key = {(f["slot"], f["index"]): f for f in flats}
+        for item in assets:
+            item["flat"] = by_key.get((item["slot"], item["index"]))
+        if not assets:
+            return
+        height = max(a["y"] + a["solid"].shape[0] for a in assets)
+        width = max(a["x"] + a["solid"].shape[1] for a in assets)
+        finer = np.zeros((height, width), bool)
+        for layer in sorted({a["layer"] for a in assets}):
+            for item in assets:
+                if item["layer"] != layer:
+                    continue
+                y, x = item["y"], item["x"]
+                h, w = item["solid"].shape
+                own = item["solid"]
+                total = int(own.sum())
+                window = finer[y:y + h, x:x + w]
+                hit = int((window & own[:window.shape[0], :window.shape[1]]).sum())
+                item["covered"] = hit / total if total else 0.0
+                item["use"] = "flat" if (item["covered"] > 0.5 and item["flat"]) else "asset"
+            for item in assets:
+                if item["layer"] != layer:
+                    continue
+                y, x = item["y"], item["x"]
+                h, w = item["solid"].shape
+                window = finer[y:y + h, x:x + w]
+                window |= item["solid"][:window.shape[0], :window.shape[1]]
+
     def pack(self, pack_name="sam3_assets", curate=True, curate_min_votes=3,
              curate_min_side=24, **kwargs):
         import io
@@ -886,58 +971,63 @@ class SAM3PackAssets:
             except (TypeError, ValueError):
                 pass
 
-        manifest = {"pack": pack_name, "elements": [], "curated": []}
+        manifest = {"pack": pack_name, "elements": [], "flats": [], "curated": []}
         buffer = io.BytesIO()
         written = curated = 0
+        assets = self._collect(kwargs, "layer_", "coords_")
+        flats = self._collect(kwargs, "flat_", "flat_coords_")
+        self._recommend(assets, flats)
         with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-            for slot in range(1, self.SLOTS + 1):
-                images = kwargs.get(f"layer_{slot}")
-                if images is None:
-                    continue
-                if not isinstance(images, list):
-                    images = [images]
-                rows = []
-                raw = self._one(kwargs.get(f"coords_{slot}"), None)
-                if raw:
-                    try:
-                        rows = json.loads(raw)
-                    except (TypeError, ValueError):
-                        rows = []
-                for index, tensor in enumerate(images):
-                    if getattr(tensor, "ndim", 0) < 3:
+            for item in assets:
+                slot, info = item["slot"], item["info"]
+                name = f"{item['uid']}_{item['label']}.png"
+                archive.writestr(f"all/layer{slot}/{name}", item["data"])
+                written += 1
+                record = {"file": f"all/layer{slot}/{name}"}
+                record.update(info)
+                record["covered_by_children"] = round(item["covered"], 4)
+                record["use"] = item["use"]
+                if item["uid"] in nine:
+                    record["nine_slice"] = {
+                        k: nine[item["uid"]][k] for k in
+                        ("left", "right", "top", "bottom", "stretch_x", "stretch_y")
+                        if k in nine[item["uid"]]
+                    }
+                mate = item.get("flat")
+                if mate is not None:
+                    record["flat_file"] = f"flat/layer{slot}/{name}"
+                manifest["elements"].append(record)
+
+            for item in flats:
+                slot = item["slot"]
+                name = f"{item['uid']}_{item['label']}.png"
+                archive.writestr(f"flat/layer{slot}/{name}", item["data"])
+                written += 1
+                record = {"file": f"flat/layer{slot}/{name}"}
+                record.update(item["info"])
+                manifest["flats"].append(record)
+
+            # The curated set drops the fine-grained pieces - a glyph of a title, a stud of a
+            # brick. Vote count and size are the two signals that stay meaningful without
+            # relying on the prompt labels, which do not track semantics. It takes whichever
+            # of the two cuts is the usable one for that element.
+            if curate:
+                for item in assets:
+                    info = item["info"]
+                    votes = info.get("votes")
+                    wide, tall = info.get("w") or 0, info.get("h") or 0
+                    if votes is not None and votes < min_votes:
                         continue
-                    shape = tensor.shape[-3:-1] if tensor.ndim == 4 else tensor.shape[:2]
-                    if min(int(shape[0]), int(shape[1])) < 2:
-                        continue          # the 1x1 placeholder an empty layer emits
-                    data = self._as_png_bytes(tensor)
-                    if data is None:
+                    if min(wide, tall) < min_side:
                         continue
-                    info = rows[index] if index < len(rows) and isinstance(rows[index], dict) else {}
-                    uid = info.get("uid") or f"L{slot}_{index + 1}"
-                    label = info.get("label") or "part"
-                    name = f"{uid}_{label}.png"
-                    archive.writestr(f"all/layer{slot}/{name}", data)
-                    written += 1
-                    record = {"file": f"all/layer{slot}/{name}"}
-                    record.update(info)
-                    if uid in nine:
-                        record["nine_slice"] = {
-                            k: nine[uid][k] for k in
-                            ("left", "right", "top", "bottom", "stretch_x", "stretch_y")
-                            if k in nine[uid]
-                        }
-                    manifest["elements"].append(record)
-                    # The curated set drops the fine-grained pieces - a glyph of a title, a stud
-                    # of a brick. Vote count and size are the two signals that stay meaningful
-                    # without relying on the prompt labels, which do not track semantics.
-                    if curate:
-                        votes = info.get("votes")
-                        wide = info.get("w") or 0
-                        tall = info.get("h") or 0
-                        if (votes is None or votes >= min_votes) and min(wide, tall) >= min_side:
-                            archive.writestr(f"curated/{name}", data)
-                            manifest["curated"].append(f"curated/{name}")
-                            curated += 1
+                    pick = item.get("flat") if item["use"] == "flat" else item
+                    if pick is None:
+                        pick = item
+                    name = f"{item['uid']}_{item['label']}.png"
+                    archive.writestr(f"curated/{name}", pick["data"])
+                    manifest["curated"].append({"file": f"curated/{name}",
+                                                "cut": item["use"], "uid": item["uid"]})
+                    curated += 1
 
             background = kwargs.get("background")
             if background is not None:
@@ -958,8 +1048,9 @@ class SAM3PackAssets:
             handle.write(payload)
 
         url = f"/view?filename={filename}&subfolder={subfolder}&type=output"
+        picked = sum(1 for a in assets if a["use"] == "flat")
         summary = (f"{written} sprites"
-                   + (f", {curated} curated" if curate else "")
+                   + (f", {curated} curated ({picked} as flat)" if curate else "")
                    + f" -> {filename} ({len(payload) / 1e6:.1f} MB)")
         return {
             "ui": {"sam3_pack": [{"filename": filename, "subfolder": subfolder,

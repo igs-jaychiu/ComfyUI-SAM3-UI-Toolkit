@@ -367,7 +367,7 @@ def _interp_axis(sub, comp, known, axis, sim_scale):
     return fill, weight
 
 
-def _repeat_offsets(known, sub, limit, count=12):
+def _repeat_offsets(known, sub, limit, count=12, min_strength=0.25):
     """Offsets at which this patch of texture repeats, best first.
 
     Autocorrelation of the known pixels finds the lattice a UI background is drawn on - a grid
@@ -388,10 +388,16 @@ def _repeat_offsets(known, sub, limit, count=12):
     window = power[y0:cy + reach + 1, x0:cx + reach + 1].copy()
     # an even-sized axis leaves the centre off by one, so the offsets come from the real slice
     yy, xx = np.mgrid[y0 - cy:y0 - cy + window.shape[0], x0 - cx:x0 - cx + window.shape[1]]
+    zero = float(power[cy, cx])
     window[(np.abs(yy) < 3) & (np.abs(xx) < 3)] = -np.inf     # the origin is not a period
     order = np.argsort(window.ravel())[::-1][:count * 4]
     seen, offsets = set(), []
     for flat in order:
+        # A patch with no real lattice still has a highest correlation somewhere, and taking it
+        # copies a thin slice over and over - the stripes that used to appear across small
+        # non-repeating elements. Insist the peak is a real fraction of the zero-lag energy.
+        if zero > 0 and float(window.ravel()[flat]) < min_strength * zero:
+            break
         dy, dx = int(yy.ravel()[flat]), int(xx.ravel()[flat])
         key = (abs(dy) // 2, abs(dx) // 2)
         if key in seen:
@@ -496,6 +502,25 @@ def periodic_fill(image, hole, tol=20.0, min_overlap=200, block=96, max_span=200
             edge = float(np.abs(sub[close] - shifted[close]).max(axis=1).mean())
             if error > tol or edge > tol:
                 continue
+            # A genuine period repeats at twice the offset as well. A spurious one - the best
+            # correlation a non-repeating patch happens to have - does not, and copying it lays
+            # a thin slice down again and again.
+            twice = np.roll(np.roll(sub, dy * 2, axis=0), dx * 2, axis=1)
+            twice_trusted = np.roll(np.roll(trusted, dy * 2, axis=0), dx * 2, axis=1)
+            far = np.ones_like(known)
+            if dy > 0:
+                far[:dy * 2] = False
+            elif dy < 0:
+                far[dy * 2:] = False
+            if dx > 0:
+                far[:, :dx * 2] = False
+            elif dx < 0:
+                far[:, dx * 2:] = False
+            repeats = trusted & twice_trusted & far
+            if repeats.sum() >= 60:
+                again = float(np.abs(sub[repeats] - twice[repeats]).max(axis=1).mean())
+                if again > tol * 1.5:
+                    continue
             usable = todo & shifted_known & inside
             if not usable.any():
                 continue
