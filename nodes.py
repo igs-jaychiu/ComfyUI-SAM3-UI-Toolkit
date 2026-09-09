@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 25
+BUILD = 26
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -1306,9 +1306,12 @@ class SAM3CropToRGBA:
                 "under": ("IMAGE",),
                 "under_thresh": ("FLOAT", {"default": 4.0, "min": 0.5, "max": 64.0, "step": 0.5}),
                 "under_cap": ("INT", {"default": 64, "min": 1, "max": 512, "step": 1}),
-                # how far past its own edge an element may claim, as a fraction of its short side
-                "under_relative": ("FLOAT", {"default": 0.35, "min": 0.0, "max": 2.0, "step": 0.01}),
                 "under_exact": ("FLOAT", {"default": 2.0, "min": 0.0, "max": 64.0, "step": 0.5}),
+                # New inputs go at the end. A saved graph stores widget values by position, so
+                # inserting one in the middle shifts every value after it - and ComfyUI then
+                # drops the outputs of every node whose shifted value is out of range while
+                # still reporting the run as a success.
+                "under_relative": ("FLOAT", {"default": 0.35, "min": 0.0, "max": 2.0, "step": 0.01}),
                 "meta_json": ("STRING", {"forceInput": True}),
             },
         }
