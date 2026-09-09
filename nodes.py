@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 16
+BUILD = 17
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -926,14 +926,15 @@ class SAM3PackAssets:
             item["flat"] = by_key.get((item["slot"], item["index"]))
         if not assets:
             return
-        height = max(a["y"] + a["solid"].shape[0] for a in assets)
-        width = max(a["x"] + a["solid"].shape[1] for a in assets)
         source = None
         if original is not None:
             array = original[0] if original.ndim == 4 else original
             source = (array[..., :3].detach().cpu().clamp(0.0, 1.0).numpy() * 255.0)
-            if source.shape[:2] != (height, width):
-                source = None
+        # the canvas is the screen when we have it; a sprite's own extent is not it - the widest
+        # element need not reach either edge
+        height, width = source.shape[:2] if source is not None else (
+            max(a["y"] + a["solid"].shape[0] for a in assets),
+            max(a["x"] + a["solid"].shape[1] for a in assets))
         finer = np.zeros((height, width), bool)
         for layer in sorted({a["layer"] for a in assets}):
             for item in assets:
