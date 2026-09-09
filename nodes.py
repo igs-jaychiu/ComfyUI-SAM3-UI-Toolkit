@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 21
+BUILD = 22
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -1634,8 +1634,15 @@ class SAM3DeterministicInpaint:
 
     @staticmethod
     def _scale_for(short_side):
-        grow = int(round(min(8.0, max(3.0, 3.0 + short_side / 150.0))))
-        reach = int(round(min(36.0, max(4.0, short_side * 0.12))))
+        """Edge bite and shadow reach for an element of this size.
+
+        The edge term used to start at 3px whatever the element was. Three pixels of
+        unconditional dilation around a 50px coin erases a ring worth 70% of the coin's own
+        area, and the sprite that carries that ring back measures twice the icon - which is
+        what the game's own textures showed when they were compared against it.
+        """
+        grow = int(round(min(8.0, max(1.0, 1.0 + short_side / 120.0))))
+        reach = int(round(min(36.0, max(2.0, short_side * 0.06))))
         return grow, reach
 
     def inpaint(self, image, masks, method="interp", radius=5, gradient_ring=20, grow=0,
