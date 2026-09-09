@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 17
+BUILD = 18
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -899,8 +899,11 @@ class SAM3PackAssets:
                          if array.shape[2] == 4 else
                          np.ones(array.shape[:2], bool))
                 rgb = (array[..., :3].detach().cpu().clamp(0.0, 1.0).numpy() * 255.0)
+                # a pale glyph never reaches the opaque core, so area is judged on a soft mask
+                visible = (array[..., 3].detach().cpu().numpy() > 0.40
+                           if array.shape[2] == 4 else np.ones(array.shape[:2], bool))
                 items.append({"slot": slot, "index": index, "info": info, "data": data,
-                              "solid": alpha, "rgb": rgb,
+                              "solid": alpha, "visible": visible, "rgb": rgb,
                               "uid": info.get("uid") or f"L{slot}_{index + 1}",
                               "label": info.get("label") or "part",
                               "layer": int(info.get("layer") or slot),
@@ -955,8 +958,20 @@ class SAM3PackAssets:
                         gap = np.abs(patch - source[y:y + patch.shape[0],
                                                     x:x + patch.shape[1]]).max(axis=2)
                         item["real"] = float((gap[core] <= 10.0).mean())
+                # Three ways a peeled cut can be the wrong thing to ship, and they are
+                # genuinely different: the children cover most of it, what is left does not
+                # match the screen, or a slice of the element went missing without any child
+                # to account for it (a text row losing its last glyph to a detection that
+                # landed on another layer).
+                mate = item["flat"]
+                kept = 1.0
+                if mate is not None and mate["visible"].sum():
+                    kept = float(item["visible"].sum() / mate["visible"].sum())
+                item["kept"] = kept
+                item["lost"] = max(0.0, (1.0 - kept) - item["covered"])
                 ruined = item["real"] is not None and item["real"] < 0.60
-                item["use"] = ("flat" if item["flat"] and (item["covered"] > 0.5 or ruined)
+                item["use"] = ("flat" if mate is not None and
+                               (item["covered"] > 0.5 or ruined or item["lost"] > 0.25)
                                else "asset")
             for item in assets:
                 if item["layer"] != layer:
@@ -1011,6 +1026,8 @@ class SAM3PackAssets:
                 record["covered_by_children"] = round(item["covered"], 4)
                 if item.get("real") is not None:
                     record["peeled_matches_screen"] = round(item["real"], 4)
+                record["peeled_keeps_area"] = round(item.get("kept", 1.0), 4)
+                record["peeled_lost_area"] = round(item.get("lost", 0.0), 4)
                 record["use"] = item["use"]
                 if item["uid"] in nine:
                     record["nine_slice"] = {
