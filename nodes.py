@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 18
+BUILD = 19
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -963,12 +963,14 @@ class SAM3PackAssets:
                 # match the screen, or a slice of the element went missing without any child
                 # to account for it (a text row losing its last glyph to a detection that
                 # landed on another layer).
+                # The denominator has to be the element's own mask. The flat cut is matted
+                # differently - it carries a soft shadow skirt - so measuring against it makes
+                # every tight leaf look like it lost half of itself.
                 mate = item["flat"]
-                kept = 1.0
-                if mate is not None and mate["visible"].sum():
-                    kept = float(item["visible"].sum() / mate["visible"].sum())
-                item["kept"] = kept
-                item["lost"] = max(0.0, (1.0 - kept) - item["covered"])
+                area = float(info.get("area") or 0.0)
+                kept = float(item["visible"].sum() / area) if area > 0 else 1.0
+                item["kept"] = min(kept, 1.0)
+                item["lost"] = max(0.0, (1.0 - item["kept"]) - item["covered"])
                 ruined = item["real"] is not None and item["real"] < 0.60
                 item["use"] = ("flat" if mate is not None and
                                (item["covered"] > 0.5 or ruined or item["lost"] > 0.25)
