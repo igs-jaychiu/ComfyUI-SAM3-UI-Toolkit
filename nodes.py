@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 32
+BUILD = 33
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -846,6 +846,10 @@ class SAM3PackAssets:
             optional[f"flat_coords_{i}"] = ("STRING", {"forceInput": True})
         optional["parts"] = ("IMAGE",)
         optional["parts_coords"] = ("STRING", {"forceInput": True})
+        # the same pieces solved against the clean plate: a second reading of each one, which
+        # matters when the piece is being matched against the art it came from
+        optional["parts_solved"] = ("IMAGE",)
+        optional["parts_solved_coords"] = ("STRING", {"forceInput": True})
         optional["background"] = ("IMAGE",)
         # the source screen, so the pack can tell a peeled cut that is still usable from one the
         # peel ruined
@@ -1098,13 +1102,16 @@ class SAM3PackAssets:
 
             # the finer pieces go in their own folder: useful for matching against source art,
             # never mixed into the set someone opens looking for whole elements
-            for item in self._collect(kwargs, "parts", "parts_coords", numbered=False):
-                name = f"{item['uid']}_{item['label']}.png"
-                archive.writestr(f"parts/{name}", item["data"])
-                written += 1
-                record = {"file": f"parts/{name}"}
-                record.update(item["info"])
-                manifest["parts"].append(record)
+            for folder, image_key, coords_key in (
+                    ("parts", "parts", "parts_coords"),
+                    ("parts_solved", "parts_solved", "parts_solved_coords")):
+                for item in self._collect(kwargs, image_key, coords_key, numbered=False):
+                    name = f"{item['uid']}_{item['label']}.png"
+                    archive.writestr(f"{folder}/{name}", item["data"])
+                    written += 1
+                    record = {"file": f"{folder}/{name}", "cut": folder}
+                    record.update(item["info"])
+                    manifest["parts"].append(record)
 
             background = kwargs.get("background")
             if background is not None:

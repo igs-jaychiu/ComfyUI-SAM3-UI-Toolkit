@@ -1,6 +1,6 @@
 {
-  "last_node_id": 76,
-  "last_link_id": 203,
+  "last_node_id": 78,
+  "last_link_id": 210,
   "nodes": [
     {
       "id": 1,
@@ -61,7 +61,8 @@
             160,
             196,
             197,
-            198
+            198,
+            204
           ],
           "slot_index": 0
         },
@@ -346,7 +347,8 @@
           "name": "PARTS",
           "type": "MASK",
           "links": [
-            199
+            199,
+            205
           ],
           "slot_index": 10
         },
@@ -354,7 +356,8 @@
           "name": "PARTS_JSON",
           "type": "STRING",
           "links": [
-            200
+            200,
+            206
           ],
           "slot_index": 11
         }
@@ -373,7 +376,7 @@
         3,
         2,
         0.06,
-        false,
+        true,
         0.05,
         4,
         2
@@ -3954,7 +3957,8 @@
             133,
             150,
             159,
-            161
+            161,
+            207
           ],
           "slot_index": 0
         }
@@ -4211,6 +4215,16 @@
           "name": "parts_coords",
           "type": "STRING",
           "link": 203
+        },
+        {
+          "name": "parts_solved",
+          "type": "IMAGE",
+          "link": 208
+        },
+        {
+          "name": "parts_solved_coords",
+          "type": "STRING",
+          "link": 209
         }
       ],
       "outputs": [
@@ -4553,6 +4567,123 @@
         "sam3_out/parts/part"
       ],
       "title": "09 pieces"
+    },
+    {
+      "id": 77,
+      "type": "SAM3CropToRGBA",
+      "pos": [
+        2600,
+        2900
+      ],
+      "size": [
+        330,
+        460
+      ],
+      "flags": {},
+      "order": 212,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 204
+        },
+        {
+          "name": "masks",
+          "type": "MASK",
+          "link": 205
+        },
+        {
+          "name": "meta_json",
+          "type": "STRING",
+          "link": 206
+        },
+        {
+          "name": "under",
+          "type": "IMAGE",
+          "link": 207
+        }
+      ],
+      "outputs": [
+        {
+          "name": "RGBA_IMAGES",
+          "type": "IMAGE",
+          "links": [
+            208,
+            210
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "COORDS_JSON",
+          "type": "STRING",
+          "links": [
+            209
+          ],
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "SAM3CropToRGBA"
+      },
+      "widgets_values": [
+        2,
+        0,
+        "sam3_out/parts/solved",
+        0,
+        "difference",
+        0.1,
+        0.35,
+        true,
+        0.12,
+        true,
+        0.8,
+        0.4,
+        0.9,
+        true,
+        5,
+        18,
+        13.0,
+        4.0,
+        64,
+        2.0,
+        0.35,
+        true,
+        0.25,
+        0.15,
+        3
+      ],
+      "title": "09 pieces solved (export only)"
+    },
+    {
+      "id": 78,
+      "type": "SaveImage",
+      "pos": [
+        2980,
+        2900
+      ],
+      "size": [
+        330,
+        380
+      ],
+      "flags": {},
+      "order": 213,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 210
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "SaveImage"
+      },
+      "widgets_values": [
+        "sam3_out/parts/solved"
+      ],
+      "title": "09 pieces solved"
     }
   ],
   "links": [
@@ -6179,6 +6310,62 @@
       71,
       36,
       "STRING"
+    ],
+    [
+      204,
+      2,
+      0,
+      77,
+      0,
+      "IMAGE"
+    ],
+    [
+      205,
+      5,
+      10,
+      77,
+      1,
+      "MASK"
+    ],
+    [
+      206,
+      5,
+      11,
+      77,
+      2,
+      "STRING"
+    ],
+    [
+      207,
+      69,
+      0,
+      77,
+      3,
+      "IMAGE"
+    ],
+    [
+      208,
+      77,
+      0,
+      71,
+      37,
+      "IMAGE"
+    ],
+    [
+      209,
+      77,
+      1,
+      71,
+      38,
+      "STRING"
+    ],
+    [
+      210,
+      77,
+      0,
+      78,
+      0,
+      "IMAGE"
     ]
   ],
   "groups": [],
