@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 39
+BUILD = 40
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -973,7 +973,11 @@ class SAM3PackAssets:
             # is a real cut it is not a sprite. Only when it is also large: a small solid
             # rectangle is a perfectly good chip or bar.
             fills_box = area >= 0.93 * max(1.0, float(w * h)) and min(w, h) >= 60
-            item["kind"] = ("debris" if min(w, h) <= 6 or
+            # A hairline is thin in its *alpha*, not in its box: the worst one on the wheel
+            # screen is a 2 px diagonal scratch sitting in a 24x276 box, which every
+            # box-shaped test waves through. Mean thickness is area over the long side.
+            thickness = area / max(1.0, float(long_side))
+            item["kind"] = ("debris" if min(w, h) <= 6 or thickness <= 3.0 or
                             (min(w, h) <= 12 and long_side >= 12 * max(1, min(w, h))) else
                             "container" if kids.get(item["uid"], 0) >= 3 else
                             "surface" if fills_box else
