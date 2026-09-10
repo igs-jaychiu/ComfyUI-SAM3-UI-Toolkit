@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 35
+BUILD = 36
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -955,6 +955,20 @@ class SAM3PackAssets:
             item["flat"] = by_key.get((item["slot"], item["index"]))
         if not assets:
             return
+        # Say what kind of thing each file is, so nobody opens the folder expecting art and
+        # finds the whole screen or a two-pixel sliver. A container is the row or card the
+        # layering built to hold others; both are worth keeping, neither is a sprite.
+        kids = {}
+        for item in assets:
+            parent = item["info"].get("parent")
+            if parent:
+                kids[parent] = kids.get(parent, 0) + 1
+        for item in assets:
+            info = item["info"]
+            w, h = int(info.get("w") or 0), int(info.get("h") or 0)
+            item["kind"] = ("debris" if min(w, h) <= 4 else
+                            "container" if kids.get(item["uid"], 0) >= 3 else
+                            "element")
         source = None
         if original is not None:
             array = original[0] if original.ndim == 4 else original
@@ -964,6 +978,22 @@ class SAM3PackAssets:
         height, width = source.shape[:2] if source is not None else (
             max(a["y"] + a["solid"].shape[0] for a in assets),
             max(a["x"] + a["solid"].shape[1] for a in assets))
+        # Every element as it is drawn, keyed by layer, so a peel's loss can be checked
+        # against what else actually ships those pixels. Only elements on this layer or a finer
+        # one count: a container behind holds everything its children have by definition, so
+        # counting it would make every loss look covered.
+        drawn_by_layer = {}
+        for item in assets:
+            mate = item.get("flat")
+            source_mask = mate["visible"] if mate is not None else item["visible"]
+            ox = mate["x"] if mate is not None else item["x"]
+            oy = mate["y"] if mate is not None else item["y"]
+            plane = drawn_by_layer.setdefault(item["layer"], np.zeros((height, width), bool))
+            mh = min(source_mask.shape[0], height - oy)
+            mw = min(source_mask.shape[1], width - ox)
+            if mh > 0 and mw > 0:
+                plane[oy:oy + mh, ox:ox + mw] |= source_mask[:mh, :mw]
+
         finer = np.zeros((height, width), bool)
         for layer in sorted({a["layer"] for a in assets}):
             for item in assets:
@@ -997,9 +1027,40 @@ class SAM3PackAssets:
                 kept = float(item["visible"].sum() / area) if area > 0 else 1.0
                 item["kept"] = min(kept, 1.0)
                 item["lost"] = max(0.0, (1.0 - item["kept"]) - item["covered"])
+                # The question the three proxies were circling: did peeling this element throw
+                # away artwork that no other file carries? Compare the two cuts pixel for pixel
+                # and discount every dropped pixel some element drawn on top ships instead. A
+                # panel emptied of its buttons loses nothing - the buttons are the files. A
+                # wheel wedge whose prize text is not an element at all loses the text for good.
+                item["unclaimed"] = 0.0
+                if mate is not None:
+                    flat_vis = mate["visible"]
+                    fy, fx = mate["y"], mate["x"]
+                    fh, fw = flat_vis.shape
+                    same = np.zeros((fh, fw), bool)
+                    dy, dx = item["y"] - fy, item["x"] - fx
+                    ay0, ax0 = max(0, dy), max(0, dx)
+                    src_y, src_x = max(0, -dy), max(0, -dx)
+                    ch = min(item["visible"].shape[0] - src_y, fh - ay0)
+                    cw = min(item["visible"].shape[1] - src_x, fw - ax0)
+                    if ch > 0 and cw > 0:
+                        same[ay0:ay0 + ch, ax0:ax0 + cw] = item["visible"][
+                            src_y:src_y + ch, src_x:src_x + cw]
+                    shipped = np.zeros((fh, fw), bool)
+                    for other_layer, plane in drawn_by_layer.items():
+                        if other_layer > item["layer"]:
+                            continue
+                        window = plane[fy:fy + fh, fx:fx + fw]
+                        shipped[:window.shape[0], :window.shape[1]] |= window
+                    own = np.zeros((fh, fw), bool)
+                    own[:flat_vis.shape[0], :flat_vis.shape[1]] = flat_vis
+                    lost_px = flat_vis & ~same & ~(shipped & ~own)
+                    item["unclaimed"] = float(lost_px.sum()) / max(1, int(flat_vis.sum()))
+                if item.get("covered", 0.0) > 0.5 and item.get("kind") == "element":
+                    item["kind"] = "container"
                 ruined = item["real"] is not None and item["real"] < 0.60
                 item["use"] = ("flat" if mate is not None and
-                               (item["covered"] > 0.5 or ruined or item["lost"] > 0.25)
+                               (item["covered"] > 0.5 or ruined or item["unclaimed"] > 0.10)
                                else "asset")
             for item in assets:
                 if item["layer"] != layer:
@@ -1057,7 +1118,9 @@ class SAM3PackAssets:
                     record["peeled_matches_screen"] = round(item["real"], 4)
                 record["peeled_keeps_area"] = round(item.get("kept", 1.0), 4)
                 record["peeled_lost_area"] = round(item.get("lost", 0.0), 4)
+                record["peeled_lost_unclaimed"] = round(item.get("unclaimed", 0.0), 4)
                 record["use"] = item["use"]
+                record["kind"] = item.get("kind", "element")
                 if item["uid"] in nine:
                     record["nine_slice"] = {
                         k: nine[item["uid"]][k] for k in
