@@ -855,22 +855,47 @@ def colour_parts(image, mask, min_frac=0.05, max_frac=0.80, clusters=7, min_dim=
                                             cv2.KMEANS_PP_CENTERS)
     index = np.full(inside.shape, -1, np.int32)
     index[inside] = assignment.ravel()
-    pieces = []
+    # Label every pixel of the element, then keep the pieces worth keeping and hand the
+    # leftovers to whichever kept piece is nearest. Dropping the small clusters outright left
+    # gaps, and a piece set with gaps can never add back up to the shape it came from - which
+    # is what a coin on a plate needs, since no single colour covers it.
+    tag = np.full(inside.shape, 0, np.int32)
+    next_tag = 1
+    sizes = {}
     for cluster in range(count):
         band = (index == cluster).astype(np.uint8)
-        if band.sum() < min_frac * area:
+        if not band.any():
             continue
         found, labelled, stats, _ = cv2.connectedComponentsWithStats(band, connectivity=8)
         for comp in range(1, found):
             size = int(stats[comp, cv2.CC_STAT_AREA])
-            if size < min_frac * area or size > max_frac * area:
-                continue
-            if min(int(stats[comp, cv2.CC_STAT_WIDTH]),
-                   int(stats[comp, cv2.CC_STAT_HEIGHT])) < min_dim:
-                continue
-            piece = np.zeros(mask.shape, bool)
-            piece[y1:y2, x1:x2] = labelled == comp
-            pieces.append((size, piece))
+            tag[labelled == comp] = next_tag
+            sizes[next_tag] = size
+            next_tag += 1
+    keep = {t for t, size in sizes.items()
+            if size >= min_frac * area and size <= max_frac * area}
+    keep = {t for t in keep
+            if min(*(lambda b: (b[2] - b[0], b[3] - b[1]))(bbox(tag == t))) >= min_dim}
+    if not keep:
+        return []
+    orphan = inside & ~np.isin(tag, list(keep))
+    if orphan.any():
+        # cv2's label output numbers the zero pixels its own way, so it cannot be read as an
+        # index into the tag map. One distance transform per kept piece and take the nearest.
+        best = np.full(tag.shape, np.inf, np.float32)
+        home = np.zeros(tag.shape, np.int32)
+        for t in keep:
+            distance = cv2.distanceTransform((tag != t).astype(np.uint8), cv2.DIST_L2, 3)
+            closer = distance < best
+            best = np.where(closer, distance, best)
+            home = np.where(closer, np.int32(t), home)
+        tag = np.where(orphan, home, tag)
+    pieces = []
+    for t in keep:
+        piece = np.zeros(mask.shape, bool)
+        piece[y1:y2, x1:x2] = tag == t
+        if piece.any():
+            pieces.append((int(piece.sum()), piece))
     pieces.sort(key=lambda t: -t[0])
     return [p for _size, p in pieces]
 
