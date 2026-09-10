@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 33
+BUILD = 34
 
 
 def _masks_to_bool_list(masks, size=None):
