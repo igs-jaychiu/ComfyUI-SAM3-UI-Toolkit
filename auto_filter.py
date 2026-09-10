@@ -937,49 +937,6 @@ def auto_layers(masks, labels=None, dedupe_iou=0.85, contain_ratio=0.85, min_are
         votes = [votes[i] for i in sel]
     n_votes = len(kept)
 
-    # --- the art an element was built from is not a set of separate objects, so prompting never
-    # returns it. Split each kept element by colour and add the pieces to the pool; containment
-    # layering then treats them as its children, which is what they are.
-    n_parts = 0
-    if split_parts and image is not None and kept:
-        boxes_have = [bbox(m) for m in kept]
-        areas_have = [int(m.sum()) for m in kept]
-        extra, extra_labels = [], []
-        # An icon sits on a plate which sits on a button, so one pass is not enough: the pieces
-        # of a piece are elements too. Each round splits what the previous round produced.
-        frontier = list(kept)
-        for _round in range(max(1, int(split_depth))):
-            produced = []
-            for source in frontier:
-                for piece in colour_parts(image, source, min_frac=float(split_min_frac))[
-                        :int(split_max_parts)]:
-                    pb, pa = bbox(piece), int(piece.sum())
-                    if pb is None or pa < min_area:
-                        continue
-                    twin = False
-                    for existing, eb, ea in zip(kept + extra,
-                                                boxes_have + [bbox(e) for e in extra],
-                                                areas_have + [int(e.sum()) for e in extra]):
-                        if eb is None:
-                            continue
-                        inter = _crop_inter(piece, pb, existing, eb)
-                        if inter / max(1, pa + ea - inter) > dedupe_iou:
-                            twin = True
-                            break
-                    if not twin:
-                        extra.append(piece)
-                        extra_labels.append('part')
-                        produced.append(piece)
-            frontier = produced
-            if not frontier:
-                break
-        if extra:
-            kept = kept + extra
-            kept_labels = kept_labels + extra_labels
-            votes = votes + [max(1, min_votes)] * len(extra)
-            n_parts = len(extra)
-        print(f"[auto_layers] split {len(kept) - n_parts} elements into {n_parts} extra parts")
-
     # --- straddle suppression: a mask that half-overlaps another (neither disjoint nor cleanly
     # contained) is a bad cut across two elements; keep whichever has more prompt agreement.
     if straddle_hi > straddle_lo > 0:
@@ -1088,10 +1045,54 @@ def auto_layers(masks, labels=None, dedupe_iou=0.85, contain_ratio=0.85, min_are
             })
         layer_meta.append(meta)
 
+    # --- the art an element was built from is not a set of separate objects, so prompting
+    # never returns it: a button is a plate, a 9-slice frame, a strip of tape and an icon. Those
+    # are separate colours though, so clustering inside each finished element recovers them.
+    # They are derived *after* the layers are settled and handed back on their own - putting
+    # them in the pool made every one a child of the element it came from, and the peel then
+    # hollowed out its own parent.
+    parts, parts_meta = [], []
+    if split_parts and image is not None:
+        boxes_k = [bbox(m) for m in kept]
+        areas_k = [int(m.sum()) for m in kept]
+        frontier = list(kept)
+        for _round in range(max(1, int(split_depth))):
+            produced = []
+            for origin in frontier:
+                for piece in colour_parts(image, origin, min_frac=float(split_min_frac))[
+                        :int(split_max_parts)]:
+                    pb, pa = bbox(piece), int(piece.sum())
+                    if pb is None or pa < min_area:
+                        continue
+                    twin = False
+                    for other, ob, oa in zip(kept + parts,
+                                             boxes_k + [bbox(p) for p in parts],
+                                             areas_k + [int(p.sum()) for p in parts]):
+                        if ob is None:
+                            continue
+                        inter = _crop_inter(piece, pb, other, ob)
+                        if inter / max(1, pa + oa - inter) > dedupe_iou:
+                            twin = True
+                            break
+                    if not twin:
+                        parts.append(piece)
+                        produced.append(piece)
+            frontier = produced
+            if not frontier:
+                break
+        for index, piece in enumerate(parts, 1):
+            x1, y1, x2, y2 = bbox(piece)
+            parts_meta.append({'uid': f'P_{index}', 'layer': 0, 'index': index,
+                               'label': 'part', 'votes': 0, 'parent': None,
+                               'area': int(piece.sum()),
+                               'x': x1, 'y': y1, 'w': x2 - x1, 'h': y2 - y1})
+        print(f"[auto_layers] {len(kept)} elements, {len(parts)} extra pieces derived after "
+              f"layering")
+
     summary = (f'in={len(masks)} sized={len(sized)} dedupe={n_dedupe} votes={n_votes} '
-               f'parts={n_parts} '
-               f'straddle={n_straddle} granular={n_granular} layers=' + '/'.join(str(len(l)) for l in layers))
-    return layers, layer_labels, summary, layer_meta
+               f'straddle={n_straddle} granular={n_granular} parts={len(parts)} layers='
+               + '/'.join(str(len(l)) for l in layers))
+    return layers, layer_labels, summary, layer_meta, parts, parts_meta
 
 
 # --------------------------------------------------------------------------- alpha refinement

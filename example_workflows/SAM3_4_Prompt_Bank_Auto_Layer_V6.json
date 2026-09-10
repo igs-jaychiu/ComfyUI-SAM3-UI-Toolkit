@@ -1,6 +1,6 @@
 {
-  "last_node_id": 74,
-  "last_link_id": 197,
+  "last_node_id": 76,
+  "last_link_id": 203,
   "nodes": [
     {
       "id": 1,
@@ -60,7 +60,8 @@
             124,
             160,
             196,
-            197
+            197,
+            198
           ],
           "slot_index": 0
         },
@@ -340,6 +341,22 @@
           "type": "STRING",
           "links": [],
           "slot_index": 9
+        },
+        {
+          "name": "PARTS",
+          "type": "MASK",
+          "links": [
+            199
+          ],
+          "slot_index": 10
+        },
+        {
+          "name": "PARTS_JSON",
+          "type": "STRING",
+          "links": [
+            200
+          ],
+          "slot_index": 11
         }
       ],
       "title": "自動 z-order 分層（含共識投票）",
@@ -4184,6 +4201,16 @@
           "name": "original",
           "type": "IMAGE",
           "link": 196
+        },
+        {
+          "name": "parts",
+          "type": "IMAGE",
+          "link": 202
+        },
+        {
+          "name": "parts_coords",
+          "type": "STRING",
+          "link": 203
         }
       ],
       "outputs": [
@@ -4414,6 +4441,118 @@
         "sam3_out/score/error"
       ],
       "title": "99 where it misses"
+    },
+    {
+      "id": 75,
+      "type": "SAM3CropToRGBA",
+      "pos": [
+        2600,
+        2400
+      ],
+      "size": [
+        330,
+        460
+      ],
+      "flags": {},
+      "order": 210,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 198
+        },
+        {
+          "name": "masks",
+          "type": "MASK",
+          "link": 199
+        },
+        {
+          "name": "meta_json",
+          "type": "STRING",
+          "link": 200
+        }
+      ],
+      "outputs": [
+        {
+          "name": "RGBA_IMAGES",
+          "type": "IMAGE",
+          "links": [
+            201,
+            202
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "COORDS_JSON",
+          "type": "STRING",
+          "links": [
+            203
+          ],
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "SAM3CropToRGBA"
+      },
+      "widgets_values": [
+        2,
+        0,
+        "sam3_out/parts/part",
+        0,
+        "difference",
+        0.1,
+        0.35,
+        true,
+        0.12,
+        true,
+        0.8,
+        0.4,
+        0.9,
+        true,
+        5,
+        18,
+        13.0,
+        4.0,
+        64,
+        2.0,
+        0.35,
+        true,
+        0.25,
+        0.15,
+        3
+      ],
+      "title": "09 pieces (export only)"
+    },
+    {
+      "id": 76,
+      "type": "SaveImage",
+      "pos": [
+        2980,
+        2400
+      ],
+      "size": [
+        330,
+        380
+      ],
+      "flags": {},
+      "order": 211,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 201
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "SaveImage"
+      },
+      "widgets_values": [
+        "sam3_out/parts/part"
+      ],
+      "title": "09 pieces"
     }
   ],
   "links": [
@@ -5992,6 +6131,54 @@
       5,
       2,
       "IMAGE"
+    ],
+    [
+      198,
+      2,
+      0,
+      75,
+      0,
+      "IMAGE"
+    ],
+    [
+      199,
+      5,
+      10,
+      75,
+      1,
+      "MASK"
+    ],
+    [
+      200,
+      5,
+      11,
+      75,
+      2,
+      "STRING"
+    ],
+    [
+      201,
+      75,
+      0,
+      76,
+      0,
+      "IMAGE"
+    ],
+    [
+      202,
+      75,
+      0,
+      71,
+      35,
+      "IMAGE"
+    ],
+    [
+      203,
+      75,
+      1,
+      71,
+      36,
+      "STRING"
     ]
   ],
   "groups": [],

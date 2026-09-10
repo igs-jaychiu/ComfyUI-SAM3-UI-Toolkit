@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 31
+BUILD = 32
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -771,8 +771,12 @@ class SAM3AutoLayerMasks:
             },
         }
 
-    RETURN_TYPES = ("MASK",) * 8 + ("STRING", "STRING")
-    RETURN_NAMES = tuple(f"LAYER_{i}" for i in range(1, 9)) + ("META_JSON", "SUMMARY")
+    # PARTS rides alongside the layers rather than in them: the pieces an element was drawn
+    # from are worth exporting, but putting them in the pool makes each a child of its own
+    # parent and the peel then hollows the parent out.
+    RETURN_TYPES = ("MASK",) * 8 + ("STRING", "STRING", "MASK", "STRING")
+    RETURN_NAMES = (tuple(f"LAYER_{i}" for i in range(1, 9))
+                    + ("META_JSON", "SUMMARY", "PARTS", "PARTS_JSON"))
     FUNCTION = "split"
     CATEGORY = "image/detection"
 
@@ -792,7 +796,7 @@ class SAM3AutoLayerMasks:
                 parsed = []
             if len(parsed) == len(raw):
                 name_list = [str(x) for x in parsed]
-        layers, layer_labels, summary, layer_meta = auto_filter.auto_layers(
+        layers, layer_labels, summary, layer_meta, parts, parts_meta = auto_filter.auto_layers(
             raw, labels=name_list, dedupe_iou=float(dedupe_iou), contain_ratio=float(contain_ratio),
             min_area=int(min_area), max_area_frac=float(max_area_frac), min_fill=float(min_fill),
             min_dim=int(min_dim), max_layers=self.MAX_LAYERS, close_holes_from=int(close_holes_from),
@@ -808,7 +812,9 @@ class SAM3AutoLayerMasks:
         outs = [_bool_list_to_masks(layer, masks, size) for layer in layers[:self.MAX_LAYERS]]
         payload = json.dumps({f"layer_{i + 1}": layer_meta[i] for i in range(self.MAX_LAYERS)},
                              ensure_ascii=False)
-        return (*outs, payload, summary)
+        parts_masks = _bool_list_to_masks(parts, masks, size)
+        parts_payload = json.dumps({"layer_0": parts_meta}, ensure_ascii=False)
+        return (*outs, payload, summary, parts_masks, parts_payload)
 
 
 class SAM3PackAssets:
@@ -838,6 +844,8 @@ class SAM3PackAssets:
         for i in range(1, cls.SLOTS + 1):
             optional[f"flat_{i}"] = ("IMAGE",)
             optional[f"flat_coords_{i}"] = ("STRING", {"forceInput": True})
+        optional["parts"] = ("IMAGE",)
+        optional["parts_coords"] = ("STRING", {"forceInput": True})
         optional["background"] = ("IMAGE",)
         # the source screen, so the pack can tell a peeled cut that is still usable from one the
         # peel ruined
@@ -879,12 +887,13 @@ class SAM3PackAssets:
         ok, buf = cv2.imencode(".png", cv2.cvtColor(rgba, cv2.COLOR_RGBA2BGRA))
         return buf.tobytes() if ok else None
 
-    def _collect(self, kwargs, image_prefix, coords_prefix):
+    def _collect(self, kwargs, image_prefix, coords_prefix, numbered=True):
         """Gather one set of cuts: PNG bytes, coordinates and the opaque core of each sprite."""
         import numpy as np
 
         items = []
-        for slot in range(1, self.SLOTS + 1):
+        slots = range(1, self.SLOTS + 1) if numbered else [""]
+        for slot in slots:
             images = kwargs.get(f"{image_prefix}{slot}")
             if images is None:
                 continue
@@ -914,11 +923,12 @@ class SAM3PackAssets:
                 # a pale glyph never reaches the opaque core, so area is judged on a soft mask
                 visible = (array[..., 3].detach().cpu().numpy() > 0.40
                            if array.shape[2] == 4 else np.ones(array.shape[:2], bool))
-                items.append({"slot": slot, "index": index, "info": info, "data": data,
+                items.append({"slot": slot or 0, "index": index, "info": info,
+                              "data": data,
                               "solid": alpha, "visible": visible, "rgb": rgb,
-                              "uid": info.get("uid") or f"L{slot}_{index + 1}",
+                              "uid": info.get("uid") or f"L{slot or 0}_{index + 1}",
                               "label": info.get("label") or "part",
-                              "layer": int(info.get("layer") or slot),
+                              "layer": int(info.get("layer") or (slot or 0)),
                               "x": int(info.get("x", 0)), "y": int(info.get("y", 0))})
         return items
 
@@ -1023,7 +1033,8 @@ class SAM3PackAssets:
             except (TypeError, ValueError):
                 pass
 
-        manifest = {"pack": pack_name, "elements": [], "flats": [], "curated": []}
+        manifest = {"pack": pack_name, "elements": [], "flats": [], "parts": [],
+                    "curated": []}
         buffer = io.BytesIO()
         written = curated = 0
         assets = self._collect(kwargs, "layer_", "coords_")
@@ -1084,6 +1095,16 @@ class SAM3PackAssets:
                     manifest["curated"].append({"file": f"curated/{name}",
                                                 "cut": item["use"], "uid": item["uid"]})
                     curated += 1
+
+            # the finer pieces go in their own folder: useful for matching against source art,
+            # never mixed into the set someone opens looking for whole elements
+            for item in self._collect(kwargs, "parts", "parts_coords", numbered=False):
+                name = f"{item['uid']}_{item['label']}.png"
+                archive.writestr(f"parts/{name}", item["data"])
+                written += 1
+                record = {"file": f"parts/{name}"}
+                record.update(item["info"])
+                manifest["parts"].append(record)
 
             background = kwargs.get("background")
             if background is not None:
@@ -1420,7 +1441,8 @@ class SAM3CropToRGBA:
         # the layer metadata from SAM3AutoLayerMasks lines up 1:1 with this layer's mask batch,
         # so uid / label / votes / parent can travel with the sprite coordinates
         meta_rows = []
-        if meta_json and layer:
+        # layer 0 is the derived-pieces set, and 0 is falsy - it still has metadata
+        if meta_json:
             try:
                 meta_rows = json.loads(meta_json).get(f"layer_{int(layer)}", [])
             except (TypeError, ValueError, AttributeError):
