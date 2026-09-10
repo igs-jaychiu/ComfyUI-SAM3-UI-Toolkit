@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 36
+BUILD = 37
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -966,7 +966,9 @@ class SAM3PackAssets:
         for item in assets:
             info = item["info"]
             w, h = int(info.get("w") or 0), int(info.get("h") or 0)
-            item["kind"] = ("debris" if min(w, h) <= 4 else
+            long_side = max(w, h)
+            item["kind"] = ("debris" if min(w, h) <= 6 or
+                            (min(w, h) <= 12 and long_side >= 12 * max(1, min(w, h))) else
                             "container" if kids.get(item["uid"], 0) >= 3 else
                             "element")
         source = None
@@ -1596,8 +1598,10 @@ class SAM3CropToRGBA:
                     # A shadow fades, so let it.
                     alpha = auto_filter.fade_margin(alpha, mask[y1:y2, x1:x2], int(edge_fade))
                 if tidy:
+                    before = alpha
                     alpha = auto_filter.tidy_alpha(alpha, float(tidy_drop_island),
                                                    float(tidy_fill_hole))
+                    colour = auto_filter.repaint_filled(colour, before, alpha)
                 rgba = np.dstack([colour, alpha]).astype(np.float32) / 255.0
                 images.append(torch.from_numpy(rgba).to(dtype=image.dtype,
                                                         device=image.device).unsqueeze(0))
@@ -1628,8 +1632,10 @@ class SAM3CropToRGBA:
                     alpha = np.where(take, window, alpha)
                     colour = np.where(take[..., None], shade.astype(np.uint8), colour)
             if tidy:
+                before = alpha
                 alpha = auto_filter.tidy_alpha(alpha, float(tidy_drop_island),
                                                float(tidy_fill_hole))
+                colour = auto_filter.repaint_filled(colour, before, alpha)
             rgba = np.dstack([colour, alpha]).astype(np.float32) / 255.0
             images.append(torch.from_numpy(rgba).to(dtype=image.dtype, device=image.device).unsqueeze(0))
             coords.append(self._record(index, x1, y1, x2, y2, meta_rows))

@@ -380,6 +380,22 @@ def close_pockets(mask, image, tol=20.0, min_frac=0.02, max_frac=1.50, walled=0.
     return mask | add
 
 
+def repaint_filled(colour, before, after):
+    """Repaint a hole the alpha tidy closed, using the sprite's own paint.
+
+    Filling a hole back to opaque restores the shape but not the picture: the colour sitting
+    there came from the layer inpaint, which was guessing what is *behind* the element, and for
+    a hole that is inside the element the answer is wrong - a peeled label leaves a smear of
+    plate colour across the middle of a trophy. The pixels around an enclosed hole are the
+    element's own surface, so propagating them inward is restoring rather than inventing.
+    """
+    holes = (after > 100) & ~(before > 100)
+    if not holes.any():
+        return colour
+    return cv2.inpaint(np.ascontiguousarray(colour.astype(np.uint8)),
+                       (holes * 255).astype(np.uint8), 3, cv2.INPAINT_TELEA)
+
+
 def solve_layer_sprite(source, under, support, alpha, floor=0.50, exact_tol=2.0):
     """Express what a peel removed as RGBA that composites back over the peel's own result.
 
