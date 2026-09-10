@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 37
+BUILD = 38
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -1828,6 +1828,21 @@ class SAM3DeterministicInpaint:
             # that has to make something up. A board of squares or a wallpaper of paw prints
             # comes back as itself instead of a smear, and nothing is invented.
             base, todo = rgb, fill
+            if periodic and method == "interp":
+                # Copying beats interpolating on a repeating surface and loses across a colour
+                # boundary, so decide it per hole by auditioning both on a ring of pixels that
+                # are known. Only the interp fallback is auditioned; the other methods keep the
+                # copy-first order they were tuned with.
+                filled, note = auto_filter.fill_auditioned(
+                    rgb, fill, tol=float(periodic_tol), block=int(periodic_block),
+                    max_span=int(periodic_max_span), blur_scale=float(blur_scale),
+                    sim_scale=float(sim_scale), blur_max=int(blur_max))
+                print(f"[SAM3DeterministicInpaint] layer fill: {note}")
+                generated = torch.from_numpy(filled.astype(np.float32) / 255.0).to(
+                    dtype=image.dtype, device=image.device)
+                union = torch.from_numpy(fill).to(device=image.device)
+                outputs.append(torch.where(union.unsqueeze(-1), generated, source))
+                continue
             if periodic:
                 stage, left = auto_filter.periodic_fill(
                     rgb, fill, tol=float(periodic_tol), block=int(periodic_block),

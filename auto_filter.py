@@ -766,6 +766,70 @@ def inpaint_gradient(image, mask, ring=20):
     return np.clip(result, 0, 255).astype(np.uint8)
 
 
+def fill_auditioned(image, fill, margin=0.70, band=5, tol=20.0, block=96, max_span=200,
+                    blur_scale=0.25, sim_scale=12.0, blur_max=41):
+    """Choose, per hole, between copying the surrounding texture and interpolating it.
+
+    Copying a repeating surface is the better fill when there is one - measured on holes punched
+    into repeating background, MAE 0.80 against 1.14. Across a colour boundary it is the worse
+    fill and by more: 6.41 against 4.87, with p90 20.2 against 11.5 and seven times as many
+    pixels off by over 64/255, because the lattice gets laid over an edge that has none and the
+    interpolation fallback never sees those pixels again. This is what left a smear across the
+    base of a trophy whose label had been peeled.
+
+    Nothing at fill time knows which kind of hole it is looking at, so audition both: widen the
+    hole by a ring of pixels that *are* known, fill the wider hole both ways, and score each on
+    that ring. The copy has to win by a margin, since a lattice over an edge scores close on the
+    ring and badly in the middle. Per family that gives MAE 0.85 / 4.92 against the copy-first
+    pipeline's 0.80 / 6.41 - it keeps almost all of the win where copying belongs and gives back
+    the loss where it does not.
+    """
+    if not fill.any():
+        return image, "nothing to fill"
+    kernel = np.ones((band * 2 + 1, band * 2 + 1), np.uint8)
+    ring = (cv2.dilate(fill.astype(np.uint8), kernel) > 0) & ~fill
+    wide = fill | ring
+
+    def copy_then_interp(mask):
+        stage, left = periodic_fill(image, mask, tol=tol, block=block, max_span=max_span)
+        base = np.clip(stage, 0, 255).astype(np.uint8)
+        if not left.any():
+            return base
+        return inpaint_interp(base, left, True, blur_scale, sim_scale, int(blur_max))
+
+    def interp_only(mask):
+        return inpaint_interp(image, mask, True, blur_scale, sim_scale, int(blur_max))
+
+    truth = image.astype(np.int16)
+    trials = {}
+    if ring.any():
+        for name, fn in (("copy", copy_then_interp), ("plain", interp_only)):
+            trial = fn(wide).astype(np.int16)
+            trials[name] = np.abs(trial - truth).max(axis=2)
+
+    copy_all = copy_then_interp(fill)
+    plain_all = interp_only(fill)
+    count, labels = cv2.connectedComponents(fill.astype(np.uint8), connectivity=8)
+    take_copy = np.zeros(fill.shape, bool)
+    picks = {"copy": 0, "plain": 0}
+    reach = np.ones((band * 2 + 3, band * 2 + 3), np.uint8)
+    for index in range(1, count):
+        component = labels == index
+        near = (cv2.dilate(component.astype(np.uint8), reach) > 0) & ring
+        pick = "plain"
+        if trials and near.any():
+            if float(trials["copy"][near].mean()) <= margin * float(
+                    trials["plain"][near].mean()):
+                pick = "copy"
+        picks[pick] += 1
+        if pick == "copy":
+            take_copy |= component
+    out = np.where(take_copy[..., None], copy_all, plain_all)
+    out = np.where(fill[..., None], out, image)
+    return (np.clip(out, 0, 255).astype(np.uint8),
+            f"{picks['copy']} holes copied, {picks['plain']} interpolated")
+
+
 def inpaint(image, fill_mask, method="interp", radius=5, gradient_ring=20,
             sim_scale=12.0, blur_scale=0.25, blur_max=41):
     if method == "gradient":
