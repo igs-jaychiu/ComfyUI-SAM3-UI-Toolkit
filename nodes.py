@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 38
+BUILD = 39
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -967,10 +967,90 @@ class SAM3PackAssets:
             info = item["info"]
             w, h = int(info.get("w") or 0), int(info.get("h") or 0)
             long_side = max(w, h)
+            area = float(info.get("area") or 0.0)
+            # A sprite has its own silhouette. A cut whose alpha fills its whole box is a window
+            # onto a bigger flat surface - a plank of a board, a slice of a panel - and while it
+            # is a real cut it is not a sprite. Only when it is also large: a small solid
+            # rectangle is a perfectly good chip or bar.
+            fills_box = area >= 0.93 * max(1.0, float(w * h)) and min(w, h) >= 60
             item["kind"] = ("debris" if min(w, h) <= 6 or
                             (min(w, h) <= 12 and long_side >= 12 * max(1, min(w, h))) else
                             "container" if kids.get(item["uid"], 0) >= 3 else
+                            "surface" if fills_box else
                             "element")
+
+        # The same sprite often comes back several times - five copies of one coin, six shelves
+        # cut from one plank, the paw print repeated across a background. Each cut is real, but a
+        # folder of near-identical files is not a library. Group them and mark the repeats, so
+        # one file can stand for the group and say how many times it appears.
+        def _thumb(mask, rgb):
+            import cv2
+            ys, xs = np.nonzero(mask)
+            if not len(ys):
+                return None
+            piece_a = mask[ys.min():ys.max() + 1, xs.min():xs.max() + 1].astype(np.uint8)
+            piece_c = rgb[ys.min():ys.max() + 1, xs.min():xs.max() + 1]
+            if min(piece_a.shape) < 4:
+                return None
+            small_a = cv2.resize(piece_a, (24, 24), interpolation=cv2.INTER_AREA) > 0
+            small_c = cv2.resize(piece_c, (24, 24), interpolation=cv2.INTER_AREA)
+            return {"alpha": small_a, "rgb": small_c.astype(np.int16),
+                    "aspect": piece_a.shape[1] / max(1, piece_a.shape[0]),
+                    "area": int(piece_a.sum())}
+
+        prints = {}
+        for item in assets:
+            # judged on the flat cut where there is one: it is the sprite as drawn, and it does
+            # not depend on the asset/flat choice made further down
+            mate = item.get("flat")
+            source = mate if mate is not None else item
+            thumb = _thumb(source["visible"], source["rgb"])
+            if thumb is not None:
+                prints[item["uid"]] = thumb
+        owner = {uid: uid for uid in prints}
+
+        def _root(uid):
+            while owner[uid] != uid:
+                owner[uid] = owner[owner[uid]]
+                uid = owner[uid]
+            return uid
+
+        uids = list(prints)
+        for index, first in enumerate(uids):
+            a = prints[first]
+            for second in uids[index + 1:]:
+                b = prints[second]
+                if not 0.8 <= a["aspect"] / max(1e-6, b["aspect"]) <= 1.25:
+                    continue
+                if not 0.5 <= a["area"] / max(1, b["area"]) <= 2.0:
+                    continue
+                union = int(np.logical_or(a["alpha"], b["alpha"]).sum())
+                if not union:
+                    continue
+                if int(np.logical_and(a["alpha"], b["alpha"]).sum()) / union < 0.88:
+                    continue
+                shared = a["alpha"] & b["alpha"]
+                if float(np.abs(a["rgb"][shared] - b["rgb"][shared]).max(axis=1).mean()) > 26.0:
+                    continue
+                first_root, second_root = _root(first), _root(second)
+                if first_root != second_root:
+                    owner[first_root] = second_root
+
+        families = {}
+        for uid in uids:
+            families.setdefault(_root(uid), []).append(uid)
+        by_uid = {item["uid"]: item for item in assets}
+        for members in families.values():
+            if len(members) < 2:
+                continue
+            # the biggest one speaks for the family
+            members.sort(key=lambda uid: -float(by_uid[uid]["info"].get("area") or 0.0))
+            for uid in members:
+                by_uid[uid]["appears"] = len(members)
+            for uid in members[1:]:
+                by_uid[uid]["duplicate_of"] = members[0]
+                if by_uid[uid]["kind"] == "element":
+                    by_uid[uid]["kind"] = "duplicate"
         source = None
         if original is not None:
             array = original[0] if original.ndim == 4 else original
@@ -1123,6 +1203,10 @@ class SAM3PackAssets:
                 record["peeled_lost_unclaimed"] = round(item.get("unclaimed", 0.0), 4)
                 record["use"] = item["use"]
                 record["kind"] = item.get("kind", "element")
+                if item.get("appears"):
+                    record["appears"] = item["appears"]
+                if item.get("duplicate_of"):
+                    record["duplicate_of"] = item["duplicate_of"]
                 if item["uid"] in nine:
                     record["nine_slice"] = {
                         k: nine[item["uid"]][k] for k in
