@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 46
+BUILD = 47
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -1643,13 +1643,24 @@ class SAM3CropToRGBA:
             core = alpha > 127
         if not core.any() or core.all():
             return alpha
+        import cv2
+
         soft = auto_filter.feather_edge(core, source, band=band)
         read = (soft * 255.0).round().astype(np.uint8)
         hard = (alpha <= 8) | (alpha >= 247)
-        # Where the alpha is a hard cut, the reading replaces it. Where it already carries a
-        # value - the shadow margin the fade wrote - take whichever is lower, so the reading can
-        # uncover a half-covered pixel but never paint an transparent one back in.
-        return np.where(hard, read, np.minimum(alpha, read)).astype(np.uint8)
+        # Only the pixels that are still a hard cut. Where the solve already produced a ramp it
+        # measured that pixel against the plate underneath, which is better evidence than a
+        # colour reading taken from the neighbourhood - lowering those made a well-solved edge
+        # worse (59% of the band soft down to 43%).
+        out = np.where(hard, read, alpha).astype(np.uint8)
+        # What is left hard is an edge with nothing to read: both sides the same colour, or a
+        # sprite cut against another sprite. A real sprite edge is not a staircase either way,
+        # so give it the coverage a one-pixel edge would have.
+        still = ((out <= 8) | (out >= 247))
+        blurred = cv2.GaussianBlur(core.astype(np.float32), (3, 3), 0)
+        ramp = (np.clip(blurred, 0.0, 1.0) * 255.0).round().astype(np.uint8)
+        rim = (cv2.dilate(core.astype(np.uint8), np.ones((3, 3), np.uint8)) > 0) &               ~(cv2.erode(core.astype(np.uint8), np.ones((3, 3), np.uint8)) > 0)
+        return np.where(still & rim, ramp, out).astype(np.uint8)
 
     def crop(self, image, masks, padding=2, feather=0, coords_prefix="", layer=0,
              matte="difference", matte_low=0.10, matte_high=0.35,
