@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 41
+BUILD = 42
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -755,7 +755,12 @@ class SAM3AutoLayerMasks:
                 "min_fill": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "min_dim": ("INT", {"default": 6, "min": 1, "max": 512, "step": 1}),
                 "close_holes_from": ("INT", {"default": 3, "min": 0, "max": 8, "step": 1}),
-                "min_votes": ("INT", {"default": 2, "min": 1, "max": 10, "step": 1}),
+                # Three prompts agreeing is where the evidence peaks. Swept on the wheel
+                # screen against the game's own textures: 2 gives 129 elements and 22 that
+                # reproduce a project texture, 3 gives 74 and 23, 4 gives 56 and 20. Going from
+                # 2 to 3 halves the fragments, cuts detections on nothing from 16 to 4, and
+                # loses no evidence at all.
+                "min_votes": ("INT", {"default": 3, "min": 1, "max": 10, "step": 1}),
                 "despeckle_frac": ("FLOAT", {"default": 0.06, "min": 0.0, "max": 1.0, "step": 0.01}),
             },
             "optional": {
