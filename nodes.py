@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 42
+BUILD = 43
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -1014,7 +1014,11 @@ class SAM3PackAssets:
                 return None
             small_a = cv2.resize(piece_a, (24, 24), interpolation=cv2.INTER_AREA) > 0
             small_c = cv2.resize(piece_c, (24, 24), interpolation=cv2.INTER_AREA)
-            return {"alpha": small_a, "rgb": small_c.astype(np.int16),
+            # Blur before comparing. Comparing thumbnails pixel for pixel measures alignment,
+            # not colour: eight files that all reproduce one coin texture read 40-61/255 apart
+            # because a sub-pixel shift lands the coin's dark rim on its bright face.
+            small_c = cv2.GaussianBlur(small_c.astype(np.float32), (5, 5), 0)
+            return {"alpha": small_a, "rgb": small_c,
                     "aspect": piece_a.shape[1] / max(1, piece_a.shape[0]),
                     "area": int(piece_a.sum())}
 
@@ -1035,22 +1039,40 @@ class SAM3PackAssets:
                 uid = owner[uid]
             return uid
 
+        def _same(a, b):
+            """The same sprite, allowing for a turn or a mirror - a wheel's wedges are one
+            sprite rotated, and three pairs of them shipped as six files."""
+            import cv2
+
+            for flip in (False, True):
+                alpha = np.fliplr(b["alpha"]) if flip else b["alpha"]
+                rgb = np.fliplr(b["rgb"]) if flip else b["rgb"]
+                for quarter in range(4):
+                    turned_a = np.rot90(alpha, quarter)
+                    turned_c = np.rot90(rgb, quarter)
+                    union = int(np.logical_or(a["alpha"], turned_a).sum())
+                    if not union:
+                        continue
+                    if int(np.logical_and(a["alpha"], turned_a).sum()) / union < 0.92:
+                        continue
+                    shared = a["alpha"] & turned_a
+                    if not shared.any():
+                        continue
+                    gap = float(np.abs(a["rgb"][shared] - turned_c[shared]).max(axis=1).mean())
+                    # measured: true pairs land at 2-29, the closest false pair (two different
+                    # wedge textures that share a silhouette) at 51
+                    if gap <= 40.0:
+                        return True
+            return False
+
         uids = list(prints)
         for index, first in enumerate(uids):
             a = prints[first]
             for second in uids[index + 1:]:
                 b = prints[second]
-                if not 0.8 <= a["aspect"] / max(1e-6, b["aspect"]) <= 1.25:
-                    continue
                 if not 0.5 <= a["area"] / max(1, b["area"]) <= 2.0:
                     continue
-                union = int(np.logical_or(a["alpha"], b["alpha"]).sum())
-                if not union:
-                    continue
-                if int(np.logical_and(a["alpha"], b["alpha"]).sum()) / union < 0.88:
-                    continue
-                shared = a["alpha"] & b["alpha"]
-                if float(np.abs(a["rgb"][shared] - b["rgb"][shared]).max(axis=1).mean()) > 26.0:
+                if not _same(a, b):
                     continue
                 first_root, second_root = _root(first), _root(second)
                 if first_root != second_root:
@@ -1518,6 +1540,9 @@ class SAM3CropToRGBA:
                 # fade the claimed shadow margin out instead of ending it in a straight line
                 "edge_fade": ("INT", {"default": 3, "min": 0, "max": 32, "step": 1}),
                 "meta_json": ("STRING", {"forceInput": True}),
+                # how many pixels of the boundary get their coverage read off the picture
+                # instead of taken from the mask; 0 keeps the hard cut
+                "edge_feather": ("INT", {"default": 2, "min": 0, "max": 6, "step": 1}),
             },
         }
 
@@ -1598,6 +1623,24 @@ class SAM3CropToRGBA:
                 used.add(m)
         return groups
 
+    @staticmethod
+    def _feather(alpha, source, band):
+        """Soften only the boundary pixels that are still a hard cut.
+
+        The interior keeps whatever the solve and the tidy decided, and a pixel already carrying
+        a partial value was measured by the solve, so it is left alone.
+        """
+        import numpy as np
+
+        if band <= 0:
+            return alpha
+        core = alpha > 127
+        if not core.any() or core.all():
+            return alpha
+        soft = auto_filter.feather_edge(core, source, band=band)
+        hard = (alpha <= 8) | (alpha >= 247)
+        return np.where(hard, (soft * 255.0).round().astype(np.uint8), alpha).astype(np.uint8)
+
     def crop(self, image, masks, padding=2, feather=0, coords_prefix="", layer=0,
              matte="difference", matte_low=0.10, matte_high=0.35,
              matte_min_coverage=0.40, matte_tight_edge=0.90,
@@ -1605,7 +1648,8 @@ class SAM3CropToRGBA:
              defringe=True, defringe_floor=0.80, halo=True, halo_grow=5,
              halo_reach=18, halo_thresh=13.0, under=None, under_thresh=4.0,
              under_cap=64, under_relative=0.35, under_exact=2.0, tidy=True,
-             tidy_drop_island=0.25, tidy_fill_hole=0.15, edge_fade=3, meta_json=""):
+             tidy_drop_island=0.25, tidy_fill_hole=0.15, edge_fade=3, meta_json="",
+             edge_feather=2):
         import cv2
         import numpy as np
 
@@ -1706,6 +1750,7 @@ class SAM3CropToRGBA:
                     alpha = auto_filter.tidy_alpha(alpha, float(tidy_drop_island),
                                                    float(tidy_fill_hole))
                     colour = auto_filter.repaint_filled(colour, before, alpha)
+                alpha = self._feather(alpha, source, int(edge_feather))
                 rgba = np.dstack([colour, alpha]).astype(np.float32) / 255.0
                 images.append(torch.from_numpy(rgba).to(dtype=image.dtype,
                                                         device=image.device).unsqueeze(0))
@@ -1740,6 +1785,7 @@ class SAM3CropToRGBA:
                 alpha = auto_filter.tidy_alpha(alpha, float(tidy_drop_island),
                                                float(tidy_fill_hole))
                 colour = auto_filter.repaint_filled(colour, before, alpha)
+            alpha = self._feather(alpha, source, int(edge_feather))
             rgba = np.dstack([colour, alpha]).astype(np.float32) / 255.0
             images.append(torch.from_numpy(rgba).to(dtype=image.dtype, device=image.device).unsqueeze(0))
             coords.append(self._record(index, x1, y1, x2, y2, meta_rows))
