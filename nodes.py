@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 43
+BUILD = 44
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -1745,12 +1745,16 @@ class SAM3CropToRGBA:
                     # line through flat paint - the cut that makes an exported file look torn.
                     # A shadow fades, so let it.
                     alpha = auto_filter.fade_margin(alpha, mask[y1:y2, x1:x2], int(edge_fade))
+                # feather first: reading the boundary off the picture can pick up a speck
+                # whose colour happens to project onto the sprite's end of the blend, and the
+                # tidy below is what drops a speck. Measured the other way round, one sprite
+                # came back with sixteen strays it did not have before.
+                alpha = self._feather(alpha, source, int(edge_feather))
                 if tidy:
                     before = alpha
                     alpha = auto_filter.tidy_alpha(alpha, float(tidy_drop_island),
                                                    float(tidy_fill_hole))
                     colour = auto_filter.repaint_filled(colour, before, alpha)
-                alpha = self._feather(alpha, source, int(edge_feather))
                 rgba = np.dstack([colour, alpha]).astype(np.float32) / 255.0
                 images.append(torch.from_numpy(rgba).to(dtype=image.dtype,
                                                         device=image.device).unsqueeze(0))
@@ -1780,12 +1784,12 @@ class SAM3CropToRGBA:
                     take = window > alpha
                     alpha = np.where(take, window, alpha)
                     colour = np.where(take[..., None], shade.astype(np.uint8), colour)
+            alpha = self._feather(alpha, source, int(edge_feather))
             if tidy:
                 before = alpha
                 alpha = auto_filter.tidy_alpha(alpha, float(tidy_drop_island),
                                                float(tidy_fill_hole))
                 colour = auto_filter.repaint_filled(colour, before, alpha)
-            alpha = self._feather(alpha, source, int(edge_feather))
             rgba = np.dstack([colour, alpha]).astype(np.float32) / 255.0
             images.append(torch.from_numpy(rgba).to(dtype=image.dtype, device=image.device).unsqueeze(0))
             coords.append(self._record(index, x1, y1, x2, y2, meta_rows))
