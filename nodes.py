@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 45
+BUILD = 46
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -1624,7 +1624,7 @@ class SAM3CropToRGBA:
         return groups
 
     @staticmethod
-    def _feather(alpha, source, band):
+    def _feather(alpha, source, band, core=None):
         """Soften only the boundary pixels that are still a hard cut.
 
         The interior keeps whatever the solve and the tidy decided, and a pixel already carrying
@@ -1634,7 +1634,13 @@ class SAM3CropToRGBA:
 
         if band <= 0:
             return alpha
-        core = alpha > 127
+        # Read the boundary of the *element*, not of the current alpha. By this point the alpha
+        # also covers the claimed shadow margin, and the outer edge of that margin sits in open
+        # background where both sides are the same colour - so the reading declined, and the
+        # sprite's real edge was never looked at. Measured on a wheel wedge: 0.2% of the file
+        # partially transparent with the margin's edge, 53% of the boundary band with this one.
+        if core is None:
+            core = alpha > 127
         if not core.any() or core.all():
             return alpha
         soft = auto_filter.feather_edge(core, source, band=band)
@@ -1753,7 +1759,8 @@ class SAM3CropToRGBA:
                 # whose colour happens to project onto the sprite's end of the blend, and the
                 # tidy below is what drops a speck. Measured the other way round, one sprite
                 # came back with sixteen strays it did not have before.
-                alpha = self._feather(alpha, source, int(edge_feather))
+                alpha = self._feather(alpha, source, int(edge_feather),
+                                      mask[y1:y2, x1:x2])
                 if tidy:
                     before = alpha
                     alpha = auto_filter.tidy_alpha(alpha, float(tidy_drop_island),
@@ -1788,7 +1795,8 @@ class SAM3CropToRGBA:
                     take = window > alpha
                     alpha = np.where(take, window, alpha)
                     colour = np.where(take[..., None], shade.astype(np.uint8), colour)
-            alpha = self._feather(alpha, source, int(edge_feather))
+            alpha = self._feather(alpha, source, int(edge_feather),
+                                  mask[y1:y2, x1:x2])
             if tidy:
                 before = alpha
                 alpha = auto_filter.tidy_alpha(alpha, float(tidy_drop_island),
