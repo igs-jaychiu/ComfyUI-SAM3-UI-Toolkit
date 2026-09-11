@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 40
+BUILD = 41
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -768,6 +768,13 @@ class SAM3AutoLayerMasks:
                                              "step": 0.01}),
                 "split_max_parts": ("INT", {"default": 4, "min": 1, "max": 16, "step": 1}),
                 "split_depth": ("INT", {"default": 2, "min": 1, "max": 4, "step": 1}),
+                # a child that is a substantial share of a leaf-like parent is the same object
+                # cut in two, not a separate asset; 0 turns this off
+                "absorb_min_share": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 0.9,
+                                               "step": 0.01}),
+                "absorb_max_share": ("FLOAT", {"default": 0.95, "min": 0.5, "max": 1.0,
+                                               "step": 0.01}),
+                "absorb_max_children": ("INT", {"default": 2, "min": 1, "max": 8, "step": 1}),
             },
         }
 
@@ -783,7 +790,8 @@ class SAM3AutoLayerMasks:
     def split(self, masks, dedupe_iou=0.8, contain_ratio=0.85, min_area=40, max_area_frac=0.98,
               min_fill=0.0, min_dim=6, close_holes_from=3, min_votes=2, despeckle_frac=0.06,
               labels_json="", image=None, split_parts=False, split_min_frac=0.05,
-              split_max_parts=4, split_depth=2):
+              split_max_parts=4, split_depth=2, absorb_min_share=0.0, absorb_max_share=0.95,
+              absorb_max_children=2):
         if masks.ndim == 2:
             masks = masks.unsqueeze(0)
         size = masks.shape[-2:]
@@ -804,6 +812,9 @@ class SAM3AutoLayerMasks:
             image=(_image_to_uint8(image) if image is not None else None),
             split_parts=bool(split_parts), split_min_frac=float(split_min_frac),
             split_max_parts=int(split_max_parts), split_depth=int(split_depth),
+            absorb_min_share=float(absorb_min_share),
+            absorb_max_share=float(absorb_max_share),
+            absorb_max_children=int(absorb_max_children),
         )
         while len(layers) < self.MAX_LAYERS:
             layers.append([])

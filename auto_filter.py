@@ -1046,7 +1046,8 @@ def auto_layers(masks, labels=None, dedupe_iou=0.85, contain_ratio=0.85, min_are
                 label_priority=None, despeckle_frac=0.06, min_votes=1, straddle_lo=0.0,
                 straddle_hi=0.0, drop_same_label_children=False, image=None,
                 split_parts=False, split_min_frac=0.06, split_max_parts=4,
-                split_depth=1):
+                split_depth=1, absorb_min_share=0.0, absorb_max_share=0.95,
+                absorb_max_children=2):
     """Pool masks from many prompts, clean them, and split into z-order layers (leaves first).
 
     Returns (layers, labels_per_layer, summary, meta_per_layer). layers[k] is a list of bool
@@ -1178,6 +1179,45 @@ def auto_layers(masks, labels=None, dedupe_iou=0.85, contain_ratio=0.85, min_are
 
     heights, parents = layer_heights(kept, contain_ratio)
 
+    # --- absorb: a child that is a substantial share of a leaf-like parent is not a separate
+    # asset, it is the same object cut in two by the prompts (a coin and the star on its face,
+    # a button and its icon). Containment alone cannot say that - everything is contained in the
+    # screen-wide card - so the share has to be bounded at *both* ends, and a parent that holds
+    # several children is a real container and is left alone. Measured on the wheel screen at a
+    # 0.20 floor: 30 fragments absorbed, 129 files down to 99, and not one file that reproduces
+    # a project texture was lost. At 0.12 two are lost, at 0.06 five.
+    if absorb_min_share > 0:
+        areas_a = [int(m.sum()) for m in kept]
+        child_count = {}
+        for index, parent in enumerate(parents):
+            if parent is not None:
+                child_count[parent] = child_count.get(parent, 0) + 1
+        merge_into = {}
+        for index, parent in enumerate(parents):
+            if parent is None:
+                continue
+            share = areas_a[index] / max(1, areas_a[parent])
+            if not absorb_min_share <= share <= absorb_max_share:
+                continue
+            if child_count.get(parent, 0) > int(absorb_max_children):
+                continue
+            merge_into.setdefault(parent, []).append(index)
+        if merge_into:
+            drop = set()
+            for parent, children in merge_into.items():
+                for child in children:
+                    kept[parent] = kept[parent] | kept[child]
+                    votes[parent] = max(votes[parent], votes[child])
+                    drop.add(child)
+            sel = [i for i in range(len(kept)) if i not in drop]
+            kept = [kept[i] for i in sel]
+            kept_labels = [kept_labels[i] for i in sel]
+            votes = [votes[i] for i in sel]
+            heights, parents = layer_heights(kept, contain_ratio)
+            print(f"[auto_layers] absorbed {len(drop)} fragments into "
+                  f"{len(merge_into)} parents")
+    n_absorb = len(kept)
+
     # place every kept mask on a layer, then sort each layer in reading order
     placement = []   # (layer_no, kept_index)
     for h in range(1, max_layers + 1):
@@ -1261,7 +1301,8 @@ def auto_layers(masks, labels=None, dedupe_iou=0.85, contain_ratio=0.85, min_are
               f"layering")
 
     summary = (f'in={len(masks)} sized={len(sized)} dedupe={n_dedupe} votes={n_votes} '
-               f'straddle={n_straddle} granular={n_granular} parts={len(parts)} layers='
+               f'straddle={n_straddle} granular={n_granular} absorb={n_absorb} '
+               f'parts={len(parts)} layers='
                + '/'.join(str(len(l)) for l in layers))
     return layers, layer_labels, summary, layer_meta, parts, parts_meta
 
