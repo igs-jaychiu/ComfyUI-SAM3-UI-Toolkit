@@ -8,7 +8,7 @@ from . import auto_filter
 
 # Bumped on every behaviour change, so a run can name the code that produced it: the
 # deploy has to wait for the server to report this number before a measurement means anything.
-BUILD = 44
+BUILD = 45
 
 
 def _masks_to_bool_list(masks, size=None):
@@ -1638,8 +1638,12 @@ class SAM3CropToRGBA:
         if not core.any() or core.all():
             return alpha
         soft = auto_filter.feather_edge(core, source, band=band)
+        read = (soft * 255.0).round().astype(np.uint8)
         hard = (alpha <= 8) | (alpha >= 247)
-        return np.where(hard, (soft * 255.0).round().astype(np.uint8), alpha).astype(np.uint8)
+        # Where the alpha is a hard cut, the reading replaces it. Where it already carries a
+        # value - the shadow margin the fade wrote - take whichever is lower, so the reading can
+        # uncover a half-covered pixel but never paint an transparent one back in.
+        return np.where(hard, read, np.minimum(alpha, read)).astype(np.uint8)
 
     def crop(self, image, masks, padding=2, feather=0, coords_prefix="", layer=0,
              matte="difference", matte_low=0.10, matte_high=0.35,
